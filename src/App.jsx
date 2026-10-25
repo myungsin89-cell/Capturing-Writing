@@ -11,7 +11,8 @@ import {
   saveFullStateToSpreadsheet,
   ensureAndSyncStudentGoogleDoc,
   resetGoogleDocWithStudentText,
-  pullBriskFeedbackFromGoogleDoc
+  pullBriskFeedbackFromGoogleDoc,
+  deleteGoogleDriveFiles
 } from './services/googleDriveService';
 import { GraduationCap, Users } from 'lucide-react';
 import {
@@ -883,15 +884,21 @@ export default function App() {
               classId: activeClassId,
               historyByTopic: {
                 ...(st.historyByTopic || {}),
-                [prevActiveId]: {
-                  status: st.status,
-                  draft1: st.draft1,
-                  draft2: st.draft2,
-                  draft3: st.draft3,
-                  draft4: st.draft4,
-                  teacherNote: st.teacherNote,
-                  feedbackItems: st.feedbackItems
-                }
+                ...(prevActiveId
+                  ? {
+                      [prevActiveId]: {
+                        status: st.status,
+                        draft1: st.draft1,
+                        draft2: st.draft2,
+                        draft3: st.draft3,
+                        draft4: st.draft4,
+                        teacherNote: st.teacherNote,
+                        feedbackItems: st.feedbackItems,
+                        docId: st.docId,
+                        docUrl: st.docUrl
+                      }
+                    }
+                  : {})
               },
               status: 'STAGE_1_WRITING',
               locked: false,
@@ -901,6 +908,8 @@ export default function App() {
               draft4: '',
               teacherNote: '',
               feedbackItems: [],
+              docId: 'DEMO_DOC_' + st.number,
+              docUrl: 'https://docs.google.com/document/u/0/',
               updatedAtIso: new Date().toISOString()
             }
           : st
@@ -933,6 +942,181 @@ export default function App() {
     }));
 
     setSelectedTopicId(newTopicId);
+  };
+
+  // 교사: 학급 삭제 (목록만 삭제 vs 관련 시트 데이터 및 구글 독스 파일까지 모두 삭제)
+  const handleDeleteClass = async (classId, { deleteDriveFiles = false } = {}) => {
+    if (!classId) return { deletedCount: 0 };
+
+    const targetStudents = students.filter(
+      (st) => String(st.classId || legacyClassId) === String(classId)
+    );
+
+    let deletedCount = 0;
+    if (deleteDriveFiles && googleAuth?.accessToken) {
+      const docIds = [];
+      targetStudents.forEach((st) => {
+        if (st.docId) docIds.push(st.docId);
+        Object.values(st.historyByTopic || {}).forEach((hist) => {
+          if (hist?.docId) docIds.push(hist.docId);
+        });
+      });
+      const res = await deleteGoogleDriveFiles(googleAuth.accessToken, docIds);
+      deletedCount = res?.deletedCount || 0;
+    }
+
+    // 구글 시트 저장 시 원격 기록과 병합하지 않고 삭제된 상태로 덮어쓰도록 설정
+    legacyDemoReplacementPendingRef.current = true;
+
+    const remainingClasses = classes.filter((c) => String(c.id) !== String(classId));
+    const nextClass = remainingClasses[0] || null;
+    const remainingTopics = topics.filter(
+      (t) => String(t.classId || legacyClassId) !== String(classId)
+    );
+    const nextClassTopics = nextClass
+      ? remainingTopics.filter(
+          (t) => String(t.classId || legacyClassId) === String(nextClass.id)
+        )
+      : [];
+    const nextActiveTopic =
+      nextClassTopics.find((t) => t.isActive) || nextClassTopics[0] || null;
+
+    setClasses(remainingClasses);
+    setTopics(remainingTopics);
+    setStudents((prev) =>
+      prev.filter((st) => String(st.classId || legacyClassId) !== String(classId))
+    );
+    setQuestions((prev) =>
+      prev.filter((q) => String(q.classId || legacyClassId) !== String(classId))
+    );
+
+    setConfig((prev) => {
+      const nextAccessKeys = { ...(prev.classAccessKeys || {}) };
+      delete nextAccessKeys[classId];
+      return {
+        ...prev,
+        className: nextClass?.className || '',
+        activeClassId: nextClass?.id || '',
+        activeTopicId: nextActiveTopic?.id || '',
+        assignmentTitle: nextActiveTopic?.title || '',
+        assignmentPrompt: nextActiveTopic?.prompt || '',
+        classLocked: Boolean(nextActiveTopic?.classLocked),
+        classAccessKeys: nextAccessKeys
+      };
+    });
+
+    setSelectedTopicId(nextActiveTopic?.id || '');
+    return { deletedCount };
+  };
+
+  // 교사: 글쓰기 주제 삭제 (목록만 삭제 vs 관련 시트 데이터 및 구글 독스 파일까지 모두 삭제)
+  const handleDeleteTopic = async (topicId, { deleteDriveFiles = false } = {}) => {
+    if (!topicId) return { deletedCount: 0 };
+
+    const targetTopic = topics.find((t) => String(t.id) === String(topicId));
+    const topicClassId = targetTopic?.classId || activeClassId;
+    const wasActive = String(config.activeTopicId) === String(topicId);
+
+    let deletedCount = 0;
+    if (deleteDriveFiles && googleAuth?.accessToken) {
+      const docIds = [];
+      students.forEach((st) => {
+        if (String(st.classId || legacyClassId) !== String(topicClassId)) return;
+        if (wasActive && st.docId) docIds.push(st.docId);
+        const histDocId = st.historyByTopic?.[topicId]?.docId;
+        if (histDocId) docIds.push(histDocId);
+      });
+      const res = await deleteGoogleDriveFiles(googleAuth.accessToken, docIds);
+      deletedCount = res?.deletedCount || 0;
+    }
+
+    // 구글 시트 저장 시 원격 기록과 병합하지 않고 삭제된 상태로 덮어쓰도록 설정
+    legacyDemoReplacementPendingRef.current = true;
+
+    const remainingTopics = topics.filter((t) => String(t.id) !== String(topicId));
+    const classRemainingTopics = remainingTopics.filter(
+      (t) => String(t.classId || legacyClassId) === String(topicClassId)
+    );
+    const nextActiveTopic = wasActive
+      ? classRemainingTopics[0] || null
+      : classRemainingTopics.find((t) => t.isActive) || classRemainingTopics[0] || null;
+
+    setTopics(
+      remainingTopics.map((t) => {
+        if (String(t.classId || legacyClassId) !== String(topicClassId)) return t;
+        return {
+          ...t,
+          isActive: Boolean(nextActiveTopic && String(t.id) === String(nextActiveTopic.id))
+        };
+      })
+    );
+
+    setQuestions((prev) => prev.filter((q) => String(q.topicId) !== String(topicId)));
+
+    setStudents((prev) =>
+      prev.map((st) => {
+        if (String(st.classId || legacyClassId) !== String(topicClassId)) return st;
+        const nextHistory = { ...(st.historyByTopic || {}) };
+        delete nextHistory[topicId];
+
+        if (!wasActive) {
+          return {
+            ...st,
+            historyByTopic: nextHistory,
+            updatedAtIso: new Date().toISOString()
+          };
+        }
+
+        if (nextActiveTopic) {
+          const restored = nextHistory[nextActiveTopic.id] || {};
+          delete nextHistory[nextActiveTopic.id];
+          return {
+            ...st,
+            historyByTopic: nextHistory,
+            status: restored.status || 'STAGE_1_WRITING',
+            locked: Boolean(nextActiveTopic.classLocked),
+            draft1: restored.draft1 || '',
+            draft2: restored.draft2 || '',
+            draft3: restored.draft3 || '',
+            draft4: restored.draft4 || '',
+            teacherNote: restored.teacherNote || '',
+            feedbackItems: restored.feedbackItems || [],
+            docId: restored.docId || 'DEMO_DOC_' + st.number,
+            docUrl: restored.docUrl || 'https://docs.google.com/document/u/0/',
+            updatedAtIso: new Date().toISOString()
+          };
+        }
+
+        return {
+          ...st,
+          historyByTopic: nextHistory,
+          status: 'STAGE_1_WRITING',
+          locked: false,
+          draft1: '',
+          draft2: '',
+          draft3: '',
+          draft4: '',
+          teacherNote: '',
+          feedbackItems: [],
+          docId: 'DEMO_DOC_' + st.number,
+          docUrl: 'https://docs.google.com/document/u/0/',
+          updatedAtIso: new Date().toISOString()
+        };
+      })
+    );
+
+    if (wasActive) {
+      setConfig((prev) => ({
+        ...prev,
+        activeTopicId: nextActiveTopic?.id || '',
+        assignmentTitle: nextActiveTopic?.title || '',
+        assignmentPrompt: nextActiveTopic?.prompt || '',
+        classLocked: Boolean(nextActiveTopic?.classLocked)
+      }));
+      setSelectedTopicId(nextActiveTopic?.id || '');
+    }
+
+    return { deletedCount };
   };
 
   const handleReplyQuestion = async (id, reply) => {
@@ -1141,10 +1325,12 @@ export default function App() {
             classes={classes}
             onSelectClass={handleSelectClass}
             onCreateClass={handleCreateClass}
+            onDeleteClass={handleDeleteClass}
             topics={visibleTopics}
             selectedTopicId={selectedTopicId}
             onSelectTopic={setSelectedTopicId}
             onCreateNewTopic={handleCreateNewTopic}
+            onDeleteTopic={handleDeleteTopic}
             onManageStudents={handleManageStudents}
             students={visibleStudents}
             allStudents={students}

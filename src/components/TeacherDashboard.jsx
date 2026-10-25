@@ -50,10 +50,12 @@ export default function TeacherDashboard({
   classes = [],
   onSelectClass,
   onCreateClass,
+  onDeleteClass,
   topics,
   selectedTopicId,
   onSelectTopic,
   onCreateNewTopic,
+  onDeleteTopic,
   onManageStudents,
   students,
   allStudents = students,
@@ -84,6 +86,10 @@ export default function TeacherDashboard({
   };
   const [showCreateClassModal, setShowCreateClassModal] = useState(false);
   const [isLoggingInGoogle, setIsLoggingInGoogle] = useState(false);
+
+  // 학급 또는 글쓰기 주제 삭제 확인 모달 상태 ({ type: 'class' | 'topic', id, title, studentCount, topicCount } | null)
+  const [deleteConfirmTarget, setDeleteConfirmTarget] = useState(null);
+  const [isDeletingTarget, setIsDeletingTarget] = useState(false);
 
   // 학급 생성 / 학생 관리 상태
   const [setupClassName, setSetupClassName] = useState('');
@@ -412,6 +418,131 @@ export default function TeacherDashboard({
     showToast(`새 글쓰기 주제 공책이 생성되어 우리 반 학생 ${students.length}명에게 자동 연결되었습니다!`);
   };
 
+  // 학급 또는 글쓰기 주제 삭제 실행 (deleteDriveFiles: false=목록만 삭제 / true=구글 독스 및 관련 자료 모두 삭제)
+  const handleExecuteDelete = async (deleteDriveFiles = false) => {
+    if (!deleteConfirmTarget || isDeletingTarget) return;
+    setIsDeletingTarget(true);
+    try {
+      const { type, id, title } = deleteConfirmTarget;
+      if (type === 'class') {
+        const res = await onDeleteClass?.(id, { deleteDriveFiles });
+        setDeleteConfirmTarget(null);
+        showToast(
+          deleteDriveFiles
+            ? `[${title}] 학급과 관련 시트 기록·구글 독스 문서(${res?.deletedCount || 0}개)를 모두 삭제했습니다.`
+            : `[${title}] 학급을 목록에서 삭제했습니다. (구글 드라이브 문서는 유지됨)`
+        );
+      } else if (type === 'topic') {
+        const res = await onDeleteTopic?.(id, { deleteDriveFiles });
+        if (String(openedTopicId) === String(id)) {
+          setOpenedTopicId(null);
+        }
+        setDeleteConfirmTarget(null);
+        showToast(
+          deleteDriveFiles
+            ? `[${title}] 주제와 관련 시트 기록·구글 독스 문서(${res?.deletedCount || 0}개)를 모두 삭제했습니다.`
+            : `[${title}] 주제를 목록에서 삭제했습니다. (구글 드라이브 문서는 유지됨)`
+        );
+      }
+    } finally {
+      setIsDeletingTarget(false);
+    }
+  };
+
+  const renderDeleteConfirmModal = () => {
+    if (!deleteConfirmTarget) return null;
+    const isClass = deleteConfirmTarget.type === 'class';
+    const targetTitle = deleteConfirmTarget.title || (isClass ? '이 학급' : '이 주제');
+
+    return (
+      <div
+        className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px] flex items-center justify-center p-4"
+        onClick={() => !isDeletingTarget && setDeleteConfirmTarget(null)}
+      >
+        <div
+          className="w-full max-w-lg sketch-card bg-white p-6 sm:p-7 space-y-5"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="flex items-start justify-between gap-3 pb-3 border-b border-[#E2E8F0]">
+            <div>
+              <span className="inline-block px-2.5 py-0.5 rounded-full bg-[#FEF2F2] border border-[#FECACA] text-[11px] font-bold text-[#DC2626] mb-1.5">
+                {isClass ? '학급 삭제 확인' : '글쓰기 주제 삭제 확인'}
+              </span>
+              <h3 className="text-lg font-bold text-[#1E293B]">
+                [{targetTitle}] {isClass ? '학급을' : '주제를'} 삭제하시겠어요?
+              </h3>
+            </div>
+            <button
+              type="button"
+              disabled={isDeletingTarget}
+              onClick={() => setDeleteConfirmTarget(null)}
+              className="p-1 rounded-lg text-[#64748B] hover:text-[#1E293B] cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+
+          <p className="text-xs sm:text-sm text-[#475569] leading-relaxed">
+            아래 두 가지 삭제 방식 중 원하는 방식을 선택해 주세요.
+          </p>
+
+          <div className="space-y-3">
+            {/* 선택지 1: 목록에서만 삭제 (드라이브 문서 보관) */}
+            <button
+              type="button"
+              disabled={isDeletingTarget}
+              onClick={() => handleExecuteDelete(false)}
+              className="w-full text-left p-4 rounded-2xl bg-[#FBFBF9] hover:bg-[#F2F9F5] border-2 border-[#CBD5E1] hover:border-[#1B4332] transition cursor-pointer space-y-1 disabled:opacity-60"
+            >
+              <div className="text-sm font-bold text-[#1B4332] flex items-center justify-between">
+                <span>1. 목록에서만 삭제하기 (구글 독스 파일 보관)</span>
+                <span className="text-xs px-2 py-0.5 rounded-lg bg-white border border-[#CBD5E1] text-[#475569]">
+                  문서 유지
+                </span>
+              </div>
+              <p className="text-xs text-[#64748B] leading-relaxed">
+                쓰담 화면 목록에서는 삭제하지만, 내 구글 드라이브에 이미 생성된 학생별 구글 독스 파일들은 지우지 않고 남겨둡니다.
+              </p>
+            </button>
+
+            {/* 선택지 2: 관련 시트 기록 + 구글 독스 파일까지 모두 삭제 */}
+            <button
+              type="button"
+              disabled={isDeletingTarget}
+              onClick={() => handleExecuteDelete(true)}
+              className="w-full text-left p-4 rounded-2xl bg-[#FEF2F2]/70 hover:bg-[#FEF2F2] border-2 border-[#FECACA] hover:border-[#DC2626] transition cursor-pointer space-y-1 disabled:opacity-60"
+            >
+              <div className="text-sm font-bold text-[#DC2626] flex items-center justify-between">
+                <span>
+                  {isDeletingTarget
+                    ? '관련 구글 독스 및 시트 데이터 삭제 중...'
+                    : '2. 관련 자료 모두 삭제하기 (시트 기록 + 구글 독스 삭제)'}
+                </span>
+                <span className="text-xs px-2 py-0.5 rounded-lg bg-[#DC2626] text-white">
+                  완전 삭제
+                </span>
+              </div>
+              <p className="text-xs text-[#991B1B] leading-relaxed">
+                쓰담 시트의 관련 기록을 비우고, 내 구글 드라이브에 생성된 관련 학생 구글 독스 문서들도 함께 휴지통으로 삭제합니다.
+              </p>
+            </button>
+          </div>
+
+          <div className="flex justify-end pt-1">
+            <button
+              type="button"
+              disabled={isDeletingTarget}
+              onClick={() => setDeleteConfirmTarget(null)}
+              className="sketch-btn-secondary px-5 py-2 text-xs sm:text-sm font-bold"
+            >
+              취소
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ============================================================================
   // 단계 1: 교사 구글 로그인 화면 (구글 로그인 1번으로 내 드라이브에 시트·폴더 자동 생성!)
   // ============================================================================
@@ -580,13 +711,32 @@ export default function TeacherDashboard({
                 <div className="absolute left-0 top-0 bottom-0 w-2.5 bg-[#1B4332]" />
 
                 <div className="pl-3 space-y-3">
-                  <div className="flex items-center justify-between">
+                  <div className="flex items-center justify-between gap-2">
                     <span className="px-2.5 py-0.5 rounded-full bg-[#F2F9F5] border border-[#B7E4C7] text-xs font-bold text-[#1B4332]">
                       담당 학급
                     </span>
-                    <span className="text-xs text-[#64748B]">
-                      개설일: {cls.createdAt}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[#64748B]">
+                        개설일: {cls.createdAt}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteConfirmTarget({
+                            type: 'class',
+                            id: cls.id,
+                            title: cls.className,
+                            studentCount: classStudentCount,
+                            topicCount: classTopicCount
+                          });
+                        }}
+                        title="학급 삭제"
+                        className="w-7 h-7 rounded-lg bg-white border border-[#CBD5E1] text-[#64748B] hover:text-[#DC2626] hover:border-[#DC2626] hover:bg-[#FEF2F2] flex items-center justify-center transition cursor-pointer shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -706,6 +856,8 @@ export default function TeacherDashboard({
             </div>
           </div>
         )}
+
+        {renderDeleteConfirmModal()}
       </div>
     );
   }
@@ -861,11 +1013,28 @@ export default function TeacherDashboard({
                       </span>
                     )}
 
-                    {waitingFeedbackCount > 0 && (
-                      <span className="px-2.5 py-0.5 rounded-full bg-[#FEF3C7] border border-[#F59E0B] text-[#92400E] text-xs font-bold">
-                        첨삭 대기 {waitingFeedbackCount}명
-                      </span>
-                    )}
+                    <div className="flex items-center gap-1.5">
+                      {waitingFeedbackCount > 0 && (
+                        <span className="px-2.5 py-0.5 rounded-full bg-[#FEF3C7] border border-[#F59E0B] text-[#92400E] text-xs font-bold">
+                          첨삭 대기 {waitingFeedbackCount}명
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDeleteConfirmTarget({
+                            type: 'topic',
+                            id: tp.id,
+                            title: tp.title
+                          });
+                        }}
+                        title="주제 삭제"
+                        className="w-7 h-7 rounded-lg bg-white border border-[#CBD5E1] text-[#64748B] hover:text-[#DC2626] hover:border-[#DC2626] hover:bg-[#FEF2F2] flex items-center justify-center transition cursor-pointer shrink-0"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
                   </div>
 
                   <div>
@@ -1143,6 +1312,8 @@ export default function TeacherDashboard({
           classId={config.activeClassId || ''}
           classAccessKey={classAccessKey}
         />
+
+        {renderDeleteConfirmModal()}
       </div>
     );
   }

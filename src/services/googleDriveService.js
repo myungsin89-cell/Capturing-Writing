@@ -730,3 +730,44 @@ export async function pullBriskFeedbackFromGoogleDoc(accessToken, docId, student
     pulledComments
   };
 }
+
+/**
+ * 학급 또는 글쓰기 주제 삭제 시, 교사가 '관련 자료 모두 삭제'를 선택한 경우
+ * 구글 드라이브에 생성된 관련 학생 구글 독스(또는 파일)를 삭제(휴지통 이동/영구 삭제)합니다.
+ */
+export async function deleteGoogleDriveFiles(accessToken, fileIds = []) {
+  if (!accessToken || !Array.isArray(fileIds) || fileIds.length === 0) {
+    return { deletedCount: 0 };
+  }
+
+  const validIds = Array.from(
+    new Set(
+      fileIds
+        .map((id) => String(id || '').trim())
+        .filter((id) => id && !id.startsWith('DEMO_'))
+    )
+  );
+
+  let deletedCount = 0;
+  for (const fileId of validIds) {
+    try {
+      await googleFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, accessToken, {
+        method: 'PATCH',
+        body: JSON.stringify({ trashed: true })
+      });
+      deletedCount++;
+    } catch (e) {
+      try {
+        await googleFetch(`https://www.googleapis.com/drive/v3/files/${fileId}`, accessToken, {
+          method: 'DELETE'
+        });
+        deletedCount++;
+      } catch (err) {
+        console.warn('구글 드라이브 파일 삭제 참고:', fileId, err);
+      }
+    }
+  }
+
+  return { deletedCount };
+}
+
