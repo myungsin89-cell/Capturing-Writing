@@ -480,6 +480,17 @@ export default function App() {
     }
   };
 
+  // 이미 로그인된 상태로 들어왔는데 학생 제출 중계기가 없으면 한 번만 자동으로 만들어 줍니다.
+  const relayAutoTriedRef = useRef(false);
+  useEffect(() => {
+    if (isStudentUrlMode || relayAutoTriedRef.current) return;
+    if (!googleAuth?.accessToken || !config.spreadsheetId || gasUrl) return;
+    if (!localStorage.getItem('sseudam_scope_consent_v2')) return;
+    relayAutoTriedRef.current = true;
+    ensureStudentRelay(googleAuth.accessToken, config.spreadsheetId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isStudentUrlMode, googleAuth?.accessToken, config.spreadsheetId, gasUrl]);
+
   // GAS 설정 모달의 [자동으로 연결하기] 버튼
   const handleAutoSetupRelay = async () => {
     if (!googleAuth?.accessToken || !config.spreadsheetId) {
