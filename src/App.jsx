@@ -14,6 +14,10 @@ import {
   pullBriskFeedbackFromGoogleDoc
 } from './services/googleDriveService';
 import { GraduationCap, Users } from 'lucide-react';
+import {
+  migrateLegacyDemoStorage,
+  removeLegacyDemoState
+} from './utils/legacyDemoMigration';
 
 const STORAGE_KEYS = {
   GAS_URL: 'sseudam_gas_url_v5',
@@ -65,6 +69,11 @@ export default function App() {
   const urlGasUrl = urlParams?.get('gasUrl') || '';
   const urlClassId = urlParams?.get('classId') || '';
   const urlAccessKey = urlParams?.get('accessKey') || '';
+
+  const [legacyDemoStorageMigrated] = useState(() =>
+    isStudentUrlMode ? false : migrateLegacyDemoStorage(localStorage, STORAGE_KEYS)
+  );
+  const legacyDemoReplacementPendingRef = useRef(legacyDemoStorageMigrated);
 
   // 기본 접속은 교사 화면('teacher'), 학생 전용 링크(?student=1)로 접속했을 때만 학생 화면('student')으로 시작!
   const [roleMode, setRoleMode] = useState(() => (isStudentUrlMode ? 'student' : 'teacher'));
@@ -262,13 +271,19 @@ export default function App() {
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
 
     syncTimeoutRef.current = setTimeout(() => {
+      const replaceRemoteRecords = legacyDemoReplacementPendingRef.current;
       saveFullStateToSpreadsheet(googleAuth.accessToken, config.spreadsheetId, {
         classes,
         topics,
         students,
         questions,
-        config
-      }).catch((e) => console.warn('구글 시트 자동 저장 참고:', e));
+        config,
+        replaceRemoteRecords
+      })
+        .then(() => {
+          if (replaceRemoteRecords) legacyDemoReplacementPendingRef.current = false;
+        })
+        .catch((e) => console.warn('구글 시트 자동 저장 참고:', e));
     }, 900);
 
     return () => {
@@ -349,48 +364,57 @@ export default function App() {
       });
 
       if (!sheetInfo.isNew) {
-        const loaded = await loadFullStateFromSpreadsheet(
+        const rawLoaded = await loadFullStateFromSpreadsheet(
           auth.accessToken,
           sheetInfo.spreadsheetId
         );
+        const migration = removeLegacyDemoState(rawLoaded);
+        const loaded = migration.state;
         const loadedClasses = Array.isArray(loaded.classes) ? loaded.classes : [];
         const loadedLegacyClassId =
           loaded.config?.activeClassId || loadedClasses[0]?.id || '';
-        if (loadedClasses.length > 0) setClasses(loadedClasses);
-        if (Array.isArray(loaded.topics) && loaded.topics.length > 0) {
-          setTopics(
-            loaded.topics.map((topic) => ({
-              ...topic,
-              classId: topic.classId || loadedLegacyClassId
-            }))
-          );
-        }
-        if (Array.isArray(loaded.students) && loaded.students.length > 0) {
-          setStudents(
-            loaded.students.map((student) => ({
-              ...student,
-              classId: student.classId || loadedLegacyClassId
-            }))
-          );
-        }
-        if (Array.isArray(loaded.questions)) {
-          setQuestions(
-            loaded.questions.map((question) => ({
-              ...question,
-              classId: question.classId || loadedLegacyClassId,
-              topicId: question.topicId || loaded.config?.activeTopicId || ''
-            }))
-          );
-        }
-        if (loaded.config) {
-          setConfig((prev) => ({
-            ...prev,
-            ...loaded.config,
-            spreadsheetId: sheetInfo.spreadsheetId,
-            spreadsheetUrl: sheetInfo.spreadsheetUrl,
-            driveFolderId: sheetInfo.folderId,
-            teacherEmail: auth.user?.email || ''
-          }));
+        const loadedTopics = (Array.isArray(loaded.topics) ? loaded.topics : []).map(
+          (topic) => ({
+            ...topic,
+            classId: topic.classId || loadedLegacyClassId
+          })
+        );
+        const loadedStudents = (Array.isArray(loaded.students) ? loaded.students : []).map(
+          (student) => ({
+            ...student,
+            classId: student.classId || loadedLegacyClassId
+          })
+        );
+        const loadedQuestions = (Array.isArray(loaded.questions) ? loaded.questions : []).map(
+          (question) => ({
+            ...question,
+            classId: question.classId || loadedLegacyClassId,
+            topicId: question.topicId || loaded.config?.activeTopicId || ''
+          })
+        );
+        const loadedConfig = {
+          ...(loaded.config || {}),
+          spreadsheetId: sheetInfo.spreadsheetId,
+          spreadsheetUrl: sheetInfo.spreadsheetUrl,
+          driveFolderId: sheetInfo.folderId,
+          teacherEmail: auth.user?.email || ''
+        };
+
+        setClasses(loadedClasses);
+        setTopics(loadedTopics);
+        setStudents(loadedStudents);
+        setQuestions(loadedQuestions);
+        setConfig((prev) => ({ ...prev, ...loadedConfig }));
+
+        if (migration.migrated) {
+          await saveFullStateToSpreadsheet(auth.accessToken, sheetInfo.spreadsheetId, {
+            classes: loadedClasses,
+            topics: loadedTopics,
+            students: loadedStudents,
+            questions: loadedQuestions,
+            config: loadedConfig,
+            replaceRemoteRecords: true
+          });
         }
       } else {
         setConfig((prev) => ({

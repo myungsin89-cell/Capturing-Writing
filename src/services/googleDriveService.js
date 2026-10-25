@@ -318,18 +318,20 @@ function mergeQuestions(localQuestions = [], remoteQuestions = []) {
 export async function saveFullStateToSpreadsheet(
   accessToken,
   spreadsheetId,
-  { classes, topics, students, questions, config }
+  { classes, topics, students, questions, config, replaceRemoteRecords = false }
 ) {
   if (!accessToken || !spreadsheetId) return;
 
   let safeStudents = students || [];
   let safeQuestions = questions || [];
-  try {
-    const remote = await loadFullStateFromSpreadsheet(accessToken, spreadsheetId);
-    safeStudents = mergeNewerRemoteRecords(safeStudents, remote.students || []);
-    safeQuestions = mergeQuestions(safeQuestions, remote.questions || []);
-  } catch (e) {
-    console.warn('저장 전 원격 변경 병합 참고:', e);
+  if (!replaceRemoteRecords) {
+    try {
+      const remote = await loadFullStateFromSpreadsheet(accessToken, spreadsheetId);
+      safeStudents = mergeNewerRemoteRecords(safeStudents, remote.students || []);
+      safeQuestions = mergeQuestions(safeQuestions, remote.questions || []);
+    } catch (e) {
+      console.warn('저장 전 원격 변경 병합 참고:', e);
+    }
   }
 
   const stateValues = buildChunkedStateValues({
@@ -362,6 +364,26 @@ export async function saveFullStateToSpreadsheet(
     ]);
   });
 
+  const questionRows = [
+    ['ID', '학급 ID', '주제 ID', '출석번호', '이름', '질문', '인용문', '답변', '해결 여부', '등록 시각', '수정 시각', '출처']
+  ];
+  safeQuestions.forEach((question) => {
+    questionRows.push([
+      String(question.id || ''),
+      String(question.classId || ''),
+      String(question.topicId || ''),
+      String(question.number || ''),
+      String(question.name || ''),
+      String(question.question || ''),
+      String(question.quote || ''),
+      String(question.reply || ''),
+      question.resolved ? '완료' : '대기',
+      String(question.createdAt || question.createdAtIso || ''),
+      String(question.updatedAt || question.updatedAtIso || ''),
+      String(question.source || '')
+    ]);
+  });
+
   await googleFetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
     accessToken,
@@ -371,7 +393,8 @@ export async function saveFullStateToSpreadsheet(
         valueInputOption: 'RAW',
         data: [
           { range: 'AppState!A1', values: stateValues },
-          { range: 'Students!A1', values: studentRows }
+          { range: 'Students!A1', values: studentRows },
+          { range: 'Questions!A1', values: questionRows }
         ]
       })
     }
@@ -381,6 +404,24 @@ export async function saveFullStateToSpreadsheet(
   if (firstUnusedRow <= 100) {
     await googleFetch(
       `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/AppState!A${firstUnusedRow}:B100:clear`,
+      accessToken,
+      { method: 'POST', body: JSON.stringify({}) }
+    );
+  }
+
+  const firstUnusedStudentRow = studentRows.length + 1;
+  if (firstUnusedStudentRow <= 200) {
+    await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Students!A${firstUnusedStudentRow}:O200:clear`,
+      accessToken,
+      { method: 'POST', body: JSON.stringify({}) }
+    );
+  }
+
+  const firstUnusedQuestionRow = questionRows.length + 1;
+  if (firstUnusedQuestionRow <= 300) {
+    await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Questions!A${firstUnusedQuestionRow}:L300:clear`,
       accessToken,
       { method: 'POST', body: JSON.stringify({}) }
     );
