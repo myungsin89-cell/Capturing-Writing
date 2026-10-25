@@ -23,7 +23,8 @@ export default function StudentShareModal({
   spreadsheetId = '',
   gasUrl = '',
   classId = '',
-  classAccessKey = ''
+  classAccessKey = '',
+  onOpenGasSetup
 }) {
   const canvasRef = useRef(null);
   const giantCanvasRef = useRef(null);
@@ -221,10 +222,29 @@ export default function StudentShareModal({
           </div>
 
           {!isBackendReady && (
-            <div className="rounded-2xl border-2 border-[#F59E0B] bg-[#FFFBEB] px-4 py-3 text-sm text-[#92400E] font-semibold leading-relaxed">
-              학생 제출 연결이 아직 완료되지 않았습니다. 먼저 선생님 화면의
-              <strong> [학생 제출 연결]</strong>에서 GAS 웹 앱 주소를 저장해 주세요.
-              연결 전 QR은 학생 글을 교사에게 전송할 수 없습니다.
+            <div className="rounded-2xl border-2 border-[#F59E0B] bg-[#FFFBEB] p-4 text-sm text-[#92400E] font-medium leading-relaxed space-y-2.5">
+              <div className="flex items-start gap-2">
+                <span className="text-base shrink-0">⚠️</span>
+                <div>
+                  <strong className="font-bold text-[#B45309]">학생 제출 연결(GAS 웹 앱)이 아직 완료되지 않았습니다.</strong>
+                  <p className="text-xs text-[#92400E] mt-0.5">
+                    학생이 작성한 글이 선생님의 구글 시트로 안전하게 전송되려면 1회 연결이 필요합니다. 연결 전에는 학생 글이 유실되지 않도록 QR 발급이 안전하게 보호됩니다.
+                  </p>
+                </div>
+              </div>
+              {onOpenGasSetup && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    onClose();
+                    onOpenGasSetup();
+                  }}
+                  className="w-full py-2.5 px-4 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs"
+                >
+                  <span>학생 제출 연결(GAS 3단계 설정) 바로가기</span>
+                  <ExternalLink className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           )}
         </div>

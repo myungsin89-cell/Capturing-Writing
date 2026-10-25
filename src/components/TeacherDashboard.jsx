@@ -1437,6 +1437,7 @@ export default function TeacherDashboard({
           gasUrl={gasUrl}
           classId={config.activeClassId || ''}
           classAccessKey={classAccessKey}
+          onOpenGasSetup={onOpenGasSetup}
         />
 
         {renderDeleteConfirmModal()}
@@ -2306,6 +2307,7 @@ export default function TeacherDashboard({
         gasUrl={gasUrl}
         classId={config.activeClassId || ''}
         classAccessKey={classAccessKey}
+        onOpenGasSetup={onOpenGasSetup}
       />
     </div>
   );
