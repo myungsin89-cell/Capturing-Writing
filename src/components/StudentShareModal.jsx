@@ -39,7 +39,7 @@ export default function StudentShareModal({
       ? `${window.location.origin}${window.location.pathname}`
       : 'https://sseudam.example.com/';
 
-  const isBackendReady = Boolean(spreadsheetId && gasUrl && classId && classAccessKey);
+  const isBackendReady = Boolean(spreadsheetId && classId);
   const shareParams = new URLSearchParams({ student: '1' });
   if (spreadsheetId) shareParams.set('sheetId', spreadsheetId);
   if (gasUrl) shareParams.set('gasUrl', gasUrl);
@@ -222,30 +222,14 @@ export default function StudentShareModal({
             </div>
           </div>
 
-          {!isBackendReady && (
-            <div className="rounded-2xl border-2 border-[#F59E0B] bg-[#FFFBEB] p-4 text-sm text-[#92400E] font-medium leading-relaxed space-y-2.5">
-              <div className="flex items-start gap-2">
-                <span className="text-base shrink-0">⚠️</span>
-                <div>
-                  <strong className="font-bold text-[#B45309]">학생 제출 연결(GAS 웹 앱)이 아직 완료되지 않았습니다.</strong>
-                  <p className="text-xs text-[#92400E] mt-0.5">
-                    학생이 작성한 글이 선생님의 구글 시트로 안전하게 전송되려면 1회 연결이 필요합니다. 연결 전에는 학생 글이 유실되지 않도록 QR 발급이 안전하게 보호됩니다.
-                  </p>
-                </div>
-              </div>
-              {onOpenGasSetup && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    onClose();
-                    onOpenGasSetup();
-                  }}
-                  className="w-full py-2.5 px-4 rounded-xl bg-[#F59E0B] hover:bg-[#D97706] text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-1.5 transition cursor-pointer shadow-xs"
-                >
-                  <span>학생 제출 연결(GAS 3단계 설정) 바로가기</span>
-                  <ExternalLink className="w-3.5 h-3.5" />
-                </button>
-              )}
+          {isBackendReady ? (
+            <div className="rounded-2xl border border-[#B7E4C7] bg-[#F2F9F5] p-3 text-xs sm:text-sm text-[#1B4332] flex items-center gap-2 font-medium">
+              <span className="w-5 h-5 rounded-full bg-[#1B4332] text-white flex items-center justify-center text-xs shrink-0">✓</span>
+              <span>선생님의 구글 드라이브와 실시간 연결되어 있습니다. 학생들이 QR을 찍고 바로 글을 쓰면 선생님 시트에 저장됩니다.</span>
+            </div>
+          ) : (
+            <div className="rounded-2xl border-2 border-[#F59E0B] bg-[#FFFBEB] p-4 text-sm text-[#92400E] font-medium leading-relaxed">
+              선생님 구글 로그인이 필요합니다. 구글 계정으로 로그인하면 내 드라이브에 시트가 생성되어 바로 학생 QR을 이용할 수 있습니다.
             </div>
           )}
         </div>

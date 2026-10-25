@@ -10,6 +10,7 @@ import {
   deployStudentRelayWebApp,
   loadFullStateFromSpreadsheet,
   saveFullStateToSpreadsheet,
+  callDirectSheetStudentApi,
   ensureAndSyncStudentGoogleDoc,
   resetGoogleDocWithStudentText,
   pullBriskFeedbackFromGoogleDoc,
@@ -240,27 +241,46 @@ export default function App() {
     }));
   }, [isStudentUrlMode, config.activeClassId, config.classAccessKeys]);
 
-  // 학생 QR 접속 시에는 공개 시트를 읽지 않고 GAS에서 학급명·주제 같은 공개 범위만 받습니다.
+  // 학생 QR 접속 시에는 GAS 또는 구글 시트 직결 엔진에서 학급명·주제 같은 공개 범위만 받습니다.
   useEffect(() => {
-    if (!isStudentUrlMode || !urlSheetId || !urlGasUrl || !urlClassId || !urlAccessKey) return;
+    if (!isStudentUrlMode || !urlSheetId || !urlClassId) return;
     let cancelled = false;
-    fetch(urlGasUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-      body: JSON.stringify({
-        action: 'studentBootstrap',
-        spreadsheetId: urlSheetId,
-        classId: urlClassId,
-        accessKey: urlAccessKey
-      })
-    })
-      .then((res) => res.json())
-      .then((data) => {
+    const runBootstrap = async () => {
+      try {
+        let data = null;
+        if (urlGasUrl) {
+          try {
+            const res = await fetch(urlGasUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+              body: JSON.stringify({
+                action: 'studentBootstrap',
+                spreadsheetId: urlSheetId,
+                classId: urlClassId,
+                accessKey: urlAccessKey
+              })
+            });
+            data = await res.json();
+          } catch {
+            data = null;
+          }
+        }
+        if (!data?.ok) {
+          data = await callDirectSheetStudentApi({
+            action: 'studentBootstrap',
+            spreadsheetId: urlSheetId,
+            classId: urlClassId,
+            accessKey: urlAccessKey
+          });
+        }
         if (cancelled || !data?.ok) return;
         if (Array.isArray(data.topics)) setTopics(data.topics);
         if (data.config) setConfig((prev) => ({ ...prev, ...data.config }));
-      })
-      .catch((e) => console.warn('학생 학급 정보 조회 참고:', e));
+      } catch (e) {
+        console.warn('학생 학급 정보 조회 참고:', e);
+      }
+    };
+    runBootstrap();
     return () => {
       cancelled = true;
     };
@@ -408,18 +428,20 @@ export default function App() {
         setStudents(loadedStudents);
         setQuestions(loadedQuestions);
         remoteGasUrl = loaded.config?.gasUrl || '';
+        if (remoteGasUrl) {
+          setGasUrl(remoteGasUrl);
+          localStorage.setItem(STORAGE_KEYS.GAS_URL, remoteGasUrl);
+        }
         setConfig((prev) => ({ ...prev, ...loadedConfig }));
 
-        if (migration.migrated) {
-          await saveFullStateToSpreadsheet(auth.accessToken, sheetInfo.spreadsheetId, {
-            classes: loadedClasses,
-            topics: loadedTopics,
-            students: loadedStudents,
-            questions: loadedQuestions,
-            config: loadedConfig,
-            replaceRemoteRecords: true
-          });
-        }
+        await saveFullStateToSpreadsheet(auth.accessToken, sheetInfo.spreadsheetId, {
+          classes: loadedClasses,
+          topics: loadedTopics,
+          students: loadedStudents,
+          questions: loadedQuestions,
+          config: loadedConfig,
+          replaceRemoteRecords: migration.migrated
+        });
       } else {
         setConfig((prev) => ({
           ...prev,
@@ -430,27 +452,19 @@ export default function App() {
         }));
       }
 
-      // 학생 제출 중계기(GAS 웹 앱) 자동 생성·배포: 이미 연결되어 있으면 건너뜁니다.
-      const relay = await ensureStudentRelay(
-        auth.accessToken,
-        sheetInfo.spreadsheetId,
-        remoteGasUrl
-      );
-
       return {
         ok: true,
         mode: 'google',
         isNewSheet: sheetInfo.isNew,
         spreadsheetUrl: sheetInfo.spreadsheetUrl,
-        user: auth.user,
-        relayStatus: relay.status
+        user: auth.user
       };
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // 학생 제출 중계기 연결 보장 (status: 'existing' | 'created' | 'api-disabled' | 'failed')
+  // 학생 제출 중계기 연결 보장 (수동 모달에서 요청 시에만 실행)
   const ensureStudentRelay = async (accessToken, spreadsheetId, remoteGasUrl = '') => {
     const existingUrl =
       gasUrl ||
@@ -475,52 +489,40 @@ export default function App() {
     } catch (err) {
       console.warn('학생 제출 중계기 자동 생성 실패:', err);
       return {
-        status: err.message === 'APPS_SCRIPT_API_DISABLED' ? 'api-disabled' : 'failed'
+        status: String(err.message).startsWith('RELAY_') ? err.message : 'failed',
+        detail: err.detail || String(err.message || '')
       };
-    }
-  };
-
-  // 이미 로그인된 상태로 들어왔는데 학생 제출 중계기가 없으면 한 번만 자동으로 만들어 줍니다.
-  const relayAutoTriedRef = useRef(false);
-  useEffect(() => {
-    if (isStudentUrlMode || relayAutoTriedRef.current) return;
-    if (!googleAuth?.accessToken || !config.spreadsheetId || gasUrl) return;
-    if (!localStorage.getItem('sseudam_scope_consent_v2')) return;
-    relayAutoTriedRef.current = true;
-    ensureStudentRelay(googleAuth.accessToken, config.spreadsheetId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isStudentUrlMode, googleAuth?.accessToken, config.spreadsheetId, gasUrl]);
-
-  // GAS 설정 모달의 [자동으로 연결하기] 버튼
-  const handleAutoSetupRelay = async () => {
-    if (!googleAuth?.accessToken || !config.spreadsheetId) {
-      return { status: 'failed' };
-    }
-    setIsSyncing(true);
-    try {
-      return await ensureStudentRelay(googleAuth.accessToken, config.spreadsheetId);
-    } finally {
-      setIsSyncing(false);
     }
   };
 
   const callGasApi = useCallback(
     async (payload) => {
-      if (!gasUrl) return null;
+      const targetSheetId = urlSheetId || config.spreadsheetId || '';
+      const fullPayload = {
+        ...payload,
+        spreadsheetId: targetSheetId
+      };
       setIsSyncing(true);
       try {
-        const res = await fetch(gasUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-          body: JSON.stringify({
-            ...payload,
-            spreadsheetId: urlSheetId || config.spreadsheetId || ''
-          })
-        });
-        const data = await res.json();
-        return data;
+        if (gasUrl) {
+          try {
+            const res = await fetch(gasUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+              body: JSON.stringify(fullPayload)
+            });
+            const data = await res.json();
+            if (data) return data;
+          } catch (e) {
+            console.warn('GAS 통신 참고 (구글 시트 직결 엔진으로 전환합니다):', e);
+          }
+        }
+        if (targetSheetId) {
+          return await callDirectSheetStudentApi(fullPayload);
+        }
+        return null;
       } catch (e) {
-        console.warn('GAS 통신 오류 (로컬 모드로 계속 작동합니다):', e);
+        console.warn('학생 제출 통신 참고:', e);
         return null;
       } finally {
         setIsSyncing(false);
@@ -547,10 +549,10 @@ export default function App() {
       return { ok: true, student: found };
     }
 
-    if (!gasUrl || !urlSheetId || !urlClassId || !urlAccessKey) {
+    if (!urlSheetId || !urlClassId) {
       return {
         ok: false,
-        error: '학생 제출 연결이 아직 완료되지 않았습니다. 선생님께 알려 주세요.'
+        error: '학생 입장 링크 정보를 다시 확인해 주세요.'
       };
     }
 
@@ -589,7 +591,7 @@ export default function App() {
 
   // 로그인한 학생 화면만 자신의 최신 글·첨삭·질문을 순차적으로 갱신합니다.
   useEffect(() => {
-    if (!isStudentUrlMode || !studentSession?.token || !gasUrl || !urlSheetId) return;
+    if (!isStudentUrlMode || !studentSession?.token || !urlSheetId) return;
     let cancelled = false;
     let timer = null;
     const refresh = async () => {

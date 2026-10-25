@@ -343,19 +343,11 @@ export default function TeacherDashboard({
       if (onTeacherGoogleLogin) {
         const res = await onTeacherGoogleLogin();
         if (res && res.mode === 'google') {
-          if (res.relayStatus === 'created') {
-            showToast('학생 제출 링크가 자동으로 준비되었어요. 처음 한 번은 [학생 제출 연결]에서 승인만 해 주세요.');
-          } else if (res.relayStatus === 'api-disabled') {
-            showToast('학생 제출 자동 연결을 위해 구글 Apps Script API를 켜 주세요. [학생 제출 연결]에서 안내해 드려요.');
-          } else if (res.relayStatus === 'failed') {
-            showToast('학생 제출 자동 연결에 실패했어요. [학생 제출 연결]에서 다시 시도해 주세요.');
-          } else {
-            showToast(
-              res.isNewSheet
-                ? '구글 로그인 완료! 내 구글 드라이브에 [쓰담] 데이터베이스 시트와 폴더가 자동 생성되었습니다!'
-                : '구글 로그인 완료! 내 구글 드라이브의 [쓰담] 시트 데이터를 불러왔습니다!'
-            );
-          }
+          showToast(
+            res.isNewSheet
+              ? '구글 로그인 완료! 내 드라이브에 [쓰담] 시트와 학생 연결이 자동 준비되었습니다!'
+              : '구글 로그인 완료! 내 구글 드라이브의 [쓰담] 시트 데이터를 불러왔습니다!'
+          );
         }
       }
       localStorage.setItem('sseudam_teacher_step_v2', 'classSelect');

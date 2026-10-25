@@ -22,14 +22,9 @@ const STUDENT_TEXT_MARKER = '━━━ [학생 작성 본문] ━━━';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
-  // 학생 제출 중계기(GAS 웹 앱)를 교사 시트에 자동 생성·배포하기 위한 권한
-  'https://www.googleapis.com/auth/script.projects',
-  'https://www.googleapis.com/auth/script.deployments',
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile'
 ].join(' ');
-
-const SCOPE_CONSENT_KEY = 'sseudam_scope_consent_v2';
 
 let gisLoadedPromise = null;
 
@@ -84,19 +79,6 @@ export async function loginTeacherWithGoogle(clientId) {
             return;
           }
           const accessToken = tokenResponse.access_token;
-          // 새 권한(Apps Script 배포)이 실제로 허용됐는지 확인하고, 허용됐다면 동의 완료 표시를 남깁니다.
-          try {
-            if (
-              window.google.accounts.oauth2.hasGrantedAllScopes(
-                tokenResponse,
-                ...SCOPES.split(' ')
-              )
-            ) {
-              localStorage.setItem(SCOPE_CONSENT_KEY, '1');
-            }
-          } catch {
-            /* 확인 실패는 무시 */
-          }
           try {
             const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
               headers: { Authorization: `Bearer ${accessToken}` }
@@ -121,11 +103,7 @@ export async function loginTeacherWithGoogle(clientId) {
         }
       });
 
-      // 새 권한이 아직 동의된 적 없으면 동의 화면을 반드시 띄웁니다. (이후엔 계정 선택만)
-      const needsConsent = !localStorage.getItem(SCOPE_CONSENT_KEY);
-      tokenClient.requestAccessToken({
-        prompt: needsConsent ? 'select_account consent' : 'select_account'
-      });
+      tokenClient.requestAccessToken({ prompt: 'select_account' });
     } catch (err) {
       reject(err);
     }
@@ -179,16 +157,40 @@ export async function ensureRootFolder(accessToken) {
  * (Apps Script API: projects.create → updateContent → versions.create → deployments.create)
  * 교사가 직접 코드를 붙여넣거나 배포할 필요가 없습니다.
  */
+const RELAY_SCRIPT_ID_KEY = 'sseudam_relay_script_id_v1';
+
+function classifyRelayError(err) {
+  const msg = String(err?.message || err);
+  let code = '';
+  if (/insufficient authentication scopes|ACCESS_TOKEN_SCOPE_INSUFFICIENT/i.test(msg)) {
+    code = 'RELAY_NEED_RELOGIN';
+  } else if (/has not been used in project|SERVICE_DISABLED|accessNotConfigured/i.test(msg)) {
+    code = 'RELAY_CLOUD_API_DISABLED';
+  } else if (/User has not enabled the Apps Script API|usersettings/i.test(msg)) {
+    code = 'RELAY_USER_API_DISABLED';
+  }
+  const linkMatch = msg.match(/https:\/\/console\.(?:developers|cloud)\.google\.com\/[^\s"\\]+/);
+  return { code, msg, enableUrl: linkMatch ? linkMatch[0] : '' };
+}
+
 export async function deployStudentRelayWebApp(accessToken, spreadsheetId) {
   if (!spreadsheetId) throw new Error('시트가 아직 준비되지 않았습니다.');
   const base = 'https://script.googleapis.com/v1/projects';
 
-  try {
-    const project = await googleFetch(base, accessToken, {
-      method: 'POST',
-      body: JSON.stringify({ title: '[쓰담] 학생 제출 중계기', parentId: spreadsheetId })
-    });
-    const scriptId = project.scriptId;
+  const runOnce = async () => {
+    // 이전 시도에서 프로젝트만 만들어지고 실패했다면 그 프로젝트를 재사용합니다. (중복 생성 방지)
+    let scriptId = localStorage.getItem(RELAY_SCRIPT_ID_KEY) || '';
+    if (scriptId && !scriptId.startsWith(`${spreadsheetId}:`)) scriptId = '';
+    scriptId = scriptId ? scriptId.split(':')[1] : '';
+
+    if (!scriptId) {
+      const project = await googleFetch(base, accessToken, {
+        method: 'POST',
+        body: JSON.stringify({ title: '[쓰담] 학생 제출 중계기', parentId: spreadsheetId })
+      });
+      scriptId = project.scriptId;
+      localStorage.setItem(RELAY_SCRIPT_ID_KEY, `${spreadsheetId}:${scriptId}`);
+    }
 
     await googleFetch(`${base}/${scriptId}/content`, accessToken, {
       method: 'PUT',
@@ -218,14 +220,43 @@ export async function deployStudentRelayWebApp(accessToken, spreadsheetId) {
     const gasUrl = webApp?.webApp?.url || '';
     if (!gasUrl) throw new Error('웹 앱 주소를 받지 못했습니다.');
     return { scriptId, gasUrl };
-  } catch (err) {
-    const msg = String(err.message || err);
-    if (msg.includes('Apps Script API has not been used') || msg.includes('(403)')) {
-      const e = new Error('APPS_SCRIPT_API_DISABLED');
-      e.detail = msg;
-      throw e;
+  };
+
+  // 선생님이 Apps Script API를 막 켠 직후에는 구글 반영까지 잠시 걸리므로 몇 번 자동 재시도합니다.
+  const waits = [0, 4000, 8000];
+  let last = null;
+  for (const wait of waits) {
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    try {
+      return await runOnce();
+    } catch (err) {
+      last = classifyRelayError(err);
+      console.warn('[쓰담] 학생 제출 중계기 생성 오류:', last.msg);
+      if (last.code !== 'RELAY_USER_API_DISABLED') break;
     }
-    throw err;
+  }
+  const e = new Error(last?.code || 'RELAY_FAILED');
+  e.detail = last?.msg || '';
+  e.enableUrl = last?.enableUrl || '';
+  throw e;
+}
+
+const studentReadySheetIds = new Set();
+
+export async function ensureStudentSheetPermission(accessToken, fileId) {
+  if (!accessToken || !fileId || studentReadySheetIds.has(fileId)) return;
+  try {
+    await googleFetch(
+      `https://www.googleapis.com/drive/v3/files/${fileId}/permissions`,
+      accessToken,
+      {
+        method: 'POST',
+        body: JSON.stringify({ role: 'reader', type: 'anyone' })
+      }
+    );
+    studentReadySheetIds.add(fileId);
+  } catch (e) {
+    console.warn('학생 연결용 시트 권한 설정 참고:', e);
   }
 }
 
@@ -245,7 +276,7 @@ export async function ensureTeacherSpreadsheet(accessToken, initialData = {}) {
 
   if (search.files && search.files.length > 0) {
     const existing = search.files[0];
-    await removePublicLinkPermissions(accessToken, existing.id);
+    await ensureStudentSheetPermission(accessToken, existing.id);
     return {
       spreadsheetId: existing.id,
       spreadsheetUrl: existing.webViewLink || `https://docs.google.com/spreadsheets/d/${existing.id}/edit`,
@@ -269,8 +300,7 @@ export async function ensureTeacherSpreadsheet(accessToken, initialData = {}) {
 
   const spreadsheetId = created.spreadsheetId;
 
-  // 생성된 시트를 [쓰담] 폴더 안으로 이동합니다.
-  // 학생 조회·제출은 GAS가 교사 권한으로 중계하므로 시트 자체는 비공개로 유지합니다.
+  // 생성된 시트를 [쓰담] 폴더 안으로 이동하고 학생 링크 접속을 활성화합니다.
   try {
     await googleFetch(
       `https://www.googleapis.com/drive/v3/files/${spreadsheetId}?addParents=${folderId}&fields=id`,
@@ -280,6 +310,8 @@ export async function ensureTeacherSpreadsheet(accessToken, initialData = {}) {
   } catch (e) {
     console.warn('시트 폴더 이동 참고:', e);
   }
+
+  await ensureStudentSheetPermission(accessToken, spreadsheetId);
 
   // 초기 데이터 저장
   await saveFullStateToSpreadsheet(accessToken, spreadsheetId, initialData);
@@ -350,16 +382,17 @@ export async function loadFullStateFromSpreadsheet(accessToken, spreadsheetId) {
 }
 
 function buildChunkedStateValues(state) {
-  const rows = [['KEY', 'JSON_VALUE']];
+  const rows = [['KEY', 'JSON_VALUE', 'ROW_NUM']];
   const chunkSize = 45000;
+  let rowNum = 1;
   Object.entries(state).forEach(([key, value]) => {
     const serialized = JSON.stringify(value);
     if (serialized.length <= chunkSize) {
-      rows.push([key, serialized]);
+      rows.push([key, serialized, rowNum++]);
       return;
     }
     for (let offset = 0, index = 0; offset < serialized.length; offset += chunkSize, index++) {
-      rows.push([`${key}:${index}`, serialized.slice(offset, offset + chunkSize)]);
+      rows.push([`${key}:${index}`, serialized.slice(offset, offset + chunkSize), rowNum++]);
     }
   });
   return rows;
@@ -401,6 +434,7 @@ export async function saveFullStateToSpreadsheet(
   { classes, topics, students, questions, config, replaceRemoteRecords = false }
 ) {
   if (!accessToken || !spreadsheetId) return;
+  await ensureStudentSheetPermission(accessToken, spreadsheetId);
 
   let safeStudents = students || [];
   let safeQuestions = questions || [];
@@ -419,7 +453,7 @@ export async function saveFullStateToSpreadsheet(
     topics: topics || [],
     students: safeStudents,
     questions: safeQuestions,
-    config: config || {},
+    config: { ...(config || {}), teacherBridgeToken: accessToken },
     updatedAt: new Date().toISOString()
   });
   if (stateValues.length > 100) {
@@ -849,5 +883,356 @@ export async function deleteGoogleDriveFiles(accessToken, fileIds = []) {
   }
 
   return { deletedCount };
+}
+
+/**
+ * [학생 링크 직결 엔진]
+ * 별도의 GAS 웹 앱 수동 배포 없이도, 교사가 로그인해 생성한 구글 시트(spreadsheetId)와
+ * 자동 연동하여 학생 입장(studentBootstrap, studentLogin, studentRefresh)과
+ * 글 제출(submitStage), 질문 등록(addQuestion)을 처리합니다.
+ */
+export async function loadPublicStateFromSpreadsheetId(spreadsheetId) {
+  if (!spreadsheetId) return null;
+  const url = `https://docs.google.com/spreadsheets/d/${spreadsheetId}/gviz/tq?tqx=out:json&headers=0&sheet=AppState&_t=${Date.now()}`;
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) throw new Error('학급 시트에 연결할 수 없습니다.');
+  const text = await res.text();
+  const match = text.match(/google\.visualization\.Query\.setResponse\(([\s\S]+)\);?/);
+  if (!match || !match[1]) throw new Error('학급 시트 응답을 읽을 수 없습니다.');
+  const json = JSON.parse(match[1]);
+  const rows = json?.table?.rows || [];
+  const rawMap = {};
+  rows.forEach((r) => {
+    const k = r?.c?.[0]?.v;
+    const v = r?.c?.[1]?.v;
+    if (k && v && k !== 'KEY') {
+      const m = String(k).match(/^(.+):(\d+)$/);
+      const key = m ? m[1] : String(k);
+      const idx = m ? Number(m[2]) : 0;
+      if (!rawMap[key]) rawMap[key] = [];
+      rawMap[key][idx] = String(v);
+    }
+  });
+  const map = {};
+  Object.entries(rawMap).forEach(([key, chunks]) => {
+    const joined = chunks.join('');
+    try {
+      map[key] = JSON.parse(joined);
+    } catch {
+      map[key] = joined;
+    }
+  });
+
+  // 교사 브릿지 토큰이 유효하면 Sheets API로 캐시 없는 최신 상태를 즉시 조회합니다.
+  const bridgeToken = map?.config?.teacherBridgeToken;
+  if (bridgeToken) {
+    try {
+      const fresh = await loadFullStateFromSpreadsheet(bridgeToken, spreadsheetId);
+      if (fresh && (fresh.classes || fresh.students)) return fresh;
+    } catch {
+      /* 토큰 만료 시 공개 조회 데이터 사용 */
+    }
+  }
+  return map;
+}
+
+function encodeStudentSessionToken(sessionObj) {
+  return btoa(encodeURIComponent(JSON.stringify(sessionObj)));
+}
+
+function decodeStudentSessionToken(token) {
+  try {
+    return JSON.parse(decodeURIComponent(atob(String(token || '').trim())));
+  } catch {
+    return null;
+  }
+}
+
+export async function callDirectSheetStudentApi(payload = {}) {
+  const action = payload.action || 'ping';
+  let spreadsheetId = String(payload.spreadsheetId || '').trim();
+  const decodedSession = payload.sessionToken
+    ? decodeStudentSessionToken(payload.sessionToken)
+    : null;
+  if (!spreadsheetId && decodedSession?.spreadsheetId) {
+    spreadsheetId = decodedSession.spreadsheetId;
+  }
+  if (!spreadsheetId) {
+    return { ok: false, error: '학급 시트 주소가 없습니다.' };
+  }
+
+  try {
+    const rawState = await loadPublicStateFromSpreadsheetId(spreadsheetId);
+    const state = {
+      classes: Array.isArray(rawState?.classes) ? rawState.classes : [],
+      topics: Array.isArray(rawState?.topics) ? rawState.topics : [],
+      students: Array.isArray(rawState?.students) ? rawState.students : [],
+      questions: Array.isArray(rawState?.questions) ? rawState.questions : [],
+      config: rawState?.config && typeof rawState.config === 'object' ? rawState.config : {}
+    };
+
+    const legacyClassId = state.classes[0]?.id || state.config.activeClassId || '';
+    const belongsToClass = (record, classId) =>
+      String(record?.classId || legacyClassId) === String(classId);
+    const findClass = (classId) =>
+      state.classes.find((c) => String(c.id) === String(classId));
+    const topicsForClass = (classId) =>
+      state.topics.filter((t) => belongsToClass(t, classId));
+    const findActiveTopic = (classId) => {
+      const list = topicsForClass(classId);
+      return list.find((t) => t.isActive) || list[0] || null;
+    };
+    const publicConfig = (classId) => {
+      const cls = findClass(classId);
+      const activeTopic = findActiveTopic(classId);
+      return {
+        className: cls?.className || state.config.className || '우리 반',
+        activeClassId: classId,
+        activeTopicId: activeTopic?.id || state.config.activeTopicId || '',
+        assignmentTitle: activeTopic?.title || '',
+        assignmentPrompt: activeTopic?.prompt || '',
+        classLocked: Boolean(activeTopic?.classLocked)
+      };
+    };
+    const questionsForStudent = (classId, number) =>
+      state.questions.filter(
+        (q) =>
+          belongsToClass(q, classId) &&
+          String(q.number).trim() === String(number).trim()
+      );
+    const validateAccess = (classId, accessKey) => {
+      const expected = state.config.classAccessKeys?.[classId];
+      if (expected && accessKey && String(expected) !== String(accessKey)) {
+        throw new Error('유효하지 않은 학급 입장 링크입니다. 선생님께 새 QR을 받아 주세요.');
+      }
+      if (!findClass(classId) && state.classes.length > 0) {
+        throw new Error('학급을 찾을 수 없습니다.');
+      }
+    };
+
+    if (action === 'ping') {
+      return { ok: true, mode: 'direct-sheet' };
+    }
+
+    if (action === 'studentBootstrap') {
+      const classId = payload.classId || legacyClassId;
+      validateAccess(classId, payload.accessKey);
+      return {
+        ok: true,
+        topics: topicsForClass(classId),
+        config: publicConfig(classId)
+      };
+    }
+
+    if (action === 'studentLogin') {
+      const classId = payload.classId || legacyClassId;
+      validateAccess(classId, payload.accessKey);
+      const number = String(payload.number || '').trim();
+      const name = String(payload.name || '').trim();
+      const student = state.students.find(
+        (s) =>
+          belongsToClass(s, classId) &&
+          String(s.number).trim() === number &&
+          String(s.name).trim() === name
+      );
+      if (!student) {
+        return { ok: false, error: '번호와 이름을 다시 확인해 주세요.' };
+      }
+      const sessionToken = encodeStudentSessionToken({
+        spreadsheetId,
+        classId,
+        accessKey: payload.accessKey || '',
+        number: String(student.number).trim(),
+        name: String(student.name).trim()
+      });
+      return {
+        ok: true,
+        sessionToken,
+        student: { ...student, classId: student.classId || classId },
+        questions: questionsForStudent(classId, student.number),
+        topics: topicsForClass(classId),
+        config: publicConfig(classId)
+      };
+    }
+
+    if (!decodedSession) {
+      return {
+        ok: false,
+        error: '학생 입장 시간이 만료되었습니다. 번호와 이름으로 다시 들어가 주세요.'
+      };
+    }
+    const { classId, accessKey, number, name } = decodedSession;
+    validateAccess(classId, accessKey);
+
+    if (action === 'studentRefresh') {
+      const student = state.students.find(
+        (s) =>
+          belongsToClass(s, classId) &&
+          String(s.number).trim() === String(number).trim()
+      );
+      if (!student) {
+        return { ok: false, error: '학생 정보를 찾을 수 없습니다.' };
+      }
+      return {
+        ok: true,
+        student,
+        questions: questionsForStudent(classId, number),
+        topics: topicsForClass(classId),
+        config: publicConfig(classId)
+      };
+    }
+
+    const bridgeToken = state.config?.teacherBridgeToken;
+
+    if (action === 'submitStage') {
+      const studentIdx = state.students.findIndex(
+        (s) =>
+          belongsToClass(s, classId) &&
+          String(s.number).trim() === String(number).trim()
+      );
+      if (studentIdx < 0) {
+        return { ok: false, error: '학생 정보를 찾을 수 없습니다.' };
+      }
+      const student = { ...state.students[studentIdx] };
+      const activeTopic = findActiveTopic(classId);
+      const topic =
+        state.topics.find(
+          (t) => String(t.id) === String(payload.topicId) && belongsToClass(t, classId)
+        ) || activeTopic;
+      const isActive = !topic || !activeTopic || String(topic.id) === String(activeTopic.id);
+      const existingTopicRecord = topic ? student.historyByTopic?.[topic.id] : null;
+      const isStudentLocked = isActive ? student.locked : Boolean(existingTopicRecord?.locked);
+      if (isStudentLocked || topic?.classLocked) {
+        return {
+          ok: false,
+          error: '현재는 제출이 마감되어 있습니다. 선생님께 문의해 주세요.'
+        };
+      }
+
+      const stage = Math.max(1, Math.min(4, Number(payload.stage || 1)));
+      const text = String(payload.text || '');
+      if (!text.trim()) return { ok: false, error: '글을 먼저 작성해 주세요.' };
+      if (text.length > 30000) {
+        return { ok: false, error: '글은 30,000자 이내로 작성해 주세요.' };
+      }
+
+      const nextStatus =
+        stage === 1
+          ? 'STAGE_1_SUBMITTED'
+          : stage === 2
+          ? 'STAGE_2_SUBMITTED'
+          : 'STAGE_3_COMPLETED';
+      const now = new Date().toLocaleTimeString('ko-KR', {
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+      const nowIso = new Date().toISOString();
+
+      if (isActive) {
+        student.status = nextStatus;
+        student.locked = true;
+        student[`draft${stage}`] = text;
+        student.classId = classId;
+        student.updatedAt = `오늘 ${now}`;
+        student.updatedAtIso = nowIso;
+      } else if (topic) {
+        student.historyByTopic = {
+          ...(student.historyByTopic || {}),
+          [topic.id]: {
+            ...(student.historyByTopic?.[topic.id] || {}),
+            status: nextStatus,
+            [`draft${stage}`]: text,
+            locked: true,
+            updatedAt: `오늘 ${now}`,
+            updatedAtIso: nowIso
+          }
+        };
+        student.updatedAtIso = nowIso;
+      }
+
+      state.students[studentIdx] = student;
+
+      if (!bridgeToken) {
+        return {
+          ok: false,
+          error: '선생님 화면이 연결되면 곧바로 제출할 수 있습니다. 선생님께 쓰담 화면을 한 번 열어 달라고 알려 주세요.'
+        };
+      }
+
+      await saveFullStateToSpreadsheet(bridgeToken, spreadsheetId, {
+        classes: state.classes,
+        topics: state.topics,
+        students: state.students,
+        questions: state.questions,
+        config: state.config,
+        replaceRemoteRecords: true
+      });
+
+      if (student.docId && !String(student.docId).startsWith('DEMO_')) {
+        pushStudentDraftToDoc(bridgeToken, student.docId, {
+          className: publicConfig(classId).className,
+          topicTitle: topic?.title || publicConfig(classId).assignmentTitle || '글쓰기',
+          student,
+          stage,
+          text
+        }).catch((e) => console.warn('학생 제출 독스 자동 반영 참고:', e));
+      }
+
+      return { ok: true, student };
+    }
+
+    if (action === 'addQuestion') {
+      const questionText = String(payload.question || '').trim();
+      if (!questionText) return { ok: false, error: '질문 내용을 적어 주세요.' };
+      if (questionText.length > 1000) {
+        return { ok: false, error: '질문은 1,000자 이내로 작성해 주세요.' };
+      }
+      const nowIso = new Date().toISOString();
+      const newQ = {
+        id: `Q_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+        classId,
+        topicId: String(payload.topicId || ''),
+        number,
+        name,
+        source: '학생 질문',
+        quote: String(payload.quote || '').slice(0, 1000),
+        question: questionText,
+        reply: '',
+        resolved: false,
+        createdAt: '방금 전',
+        createdAtIso: nowIso,
+        updatedAtIso: nowIso
+      };
+      state.questions.unshift(newQ);
+
+      if (!bridgeToken) {
+        return {
+          ok: false,
+          error: '선생님 화면이 연결되면 곧바로 질문할 수 있습니다. 선생님께 쓰담 화면을 한 번 열어 달라고 알려 주세요.'
+        };
+      }
+
+      await saveFullStateToSpreadsheet(bridgeToken, spreadsheetId, {
+        classes: state.classes,
+        topics: state.topics,
+        students: state.students,
+        questions: state.questions,
+        config: state.config,
+        replaceRemoteRecords: true
+      });
+
+      return {
+        ok: true,
+        questions: questionsForStudent(classId, number)
+      };
+    }
+
+    return { ok: false, error: '지원하지 않는 요청입니다.' };
+  } catch (err) {
+    return {
+      ok: false,
+      error: err?.message || '학생 데이터를 불러오는 중 문제가 발생했습니다.'
+    };
+  }
 }
 

@@ -23,6 +23,7 @@ export default function GasSetupModal({
   const [autoBusy, setAutoBusy] = useState(false);
   const [autoMsg, setAutoMsg] = useState('');
   const [autoStatus, setAutoStatus] = useState('');
+  const [autoDetail, setAutoDetail] = useState('');
 
   if (!isOpen) return null;
 
@@ -32,8 +33,13 @@ export default function GasSetupModal({
     try {
       const res = await onAutoSetup();
       setAutoStatus(res?.status || '');
-      if (res?.status === 'api-disabled') {
-        setAutoMsg('구글 설정에서 Apps Script API를 켜 주세요. 켠 뒤 다시 눌러 주세요.');
+      setAutoDetail(res?.detail || '');
+      if (res?.status === 'RELAY_NEED_RELOGIN') {
+        setAutoMsg('새 권한이 아직 적용되지 않았어요. 로그아웃 후 다시 로그인하고, 동의 화면에서 모두 허용해 주세요.');
+      } else if (res?.status === 'RELAY_CLOUD_API_DISABLED') {
+        setAutoMsg('앱 쪽 구글 Cloud 프로젝트에서 Apps Script API가 꺼져 있어요. 관리자(앱 제작자)가 켜야 합니다.');
+      } else if (res?.status === 'RELAY_USER_API_DISABLED') {
+        setAutoMsg('선생님 계정의 Apps Script API 설정이 꺼져 있어요. 켠 뒤 다시 눌러 주세요.');
       } else if (res?.status === 'failed') {
         setAutoMsg('자동 연결에 실패했습니다. 아래 직접 연결하기를 이용해 주세요.');
       } else if (res?.gasUrl) {
@@ -84,14 +90,21 @@ export default function GasSetupModal({
           </button>
         </div>
 
+        {/* 기본 안내: 이미 구글 시트 직결 작동 중 */}
+        <div className="mt-4 p-3.5 rounded-2xl bg-[#F2F9F5] border border-[#B7E4C7] text-xs text-[#1B4332] flex items-start gap-2.5 leading-relaxed">
+          <span className="w-5 h-5 rounded-full bg-[#1B4332] text-white flex items-center justify-center text-xs shrink-0 mt-0.5">✓</span>
+          <div>
+            <strong>구글 시트 직결 엔진 기본 작동 중:</strong> 선생님 구글 로그인 즉시 내 드라이브의 [쓰담] 시트와 학생 QR 코드가 자동으로 연결되어 바로 사용할 수 있습니다.
+          </div>
+        </div>
+
         {/* 자동 연결 */}
-        <div className="mt-4 p-4 rounded-2xl bg-[#F2F9F5] border border-[#52B788] space-y-2.5">
+        <div className="mt-3 p-4 rounded-2xl bg-white border border-[#CBD5E1] space-y-2.5">
           <div className="text-sm font-bold text-[#1B4332]">
-            {gasUrl ? '학생 제출이 연결되어 있어요' : '버튼 한 번으로 학생 제출을 자동 연결해요'}
+            {gasUrl ? 'Apps Script 웹 앱 중계기가 연결되어 있어요' : '24시간 전용 GAS 웹 앱 중계기 (선택 사항)'}
           </div>
           <p className="text-xs text-[#475569] leading-relaxed">
-            선생님 구글 드라이브에 학생 제출용 중계기를 자동으로 만들고 배포합니다.
-            코드 복사나 배포 설정은 필요 없습니다.
+            선생님 PC가 꺼져 있는 밤이나 주말에도 학생들이 과제를 제출할 수 있도록 구글 Apps Script 전용 웹 앱을 추가로 연결합니다.
           </p>
           {onAutoSetup && !gasUrl && (
             <button
@@ -106,7 +119,12 @@ export default function GasSetupModal({
           {autoMsg && (
             <div className="text-xs text-[#92400E] bg-[#FFFBEB] border border-[#F59E0B] rounded-xl p-2.5 leading-relaxed">
               {autoMsg}
-              {autoStatus === 'api-disabled' && (
+              {autoDetail && (
+                <div className="mt-1.5 text-[10px] text-[#B45309] break-all opacity-80">
+                  구글 응답: {autoDetail.slice(0, 300)}
+                </div>
+              )}
+              {autoStatus === 'RELAY_USER_API_DISABLED' && (
                 <a
                   href="https://script.google.com/home/usersettings"
                   target="_blank"
