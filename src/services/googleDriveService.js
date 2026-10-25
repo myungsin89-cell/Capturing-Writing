@@ -9,6 +9,9 @@
  * 4. Brisk Teaching 첨삭 가져오기 및 이전 차수 표/댓글 자동 청소도 교사의 OAuth 토큰으로 직접 처리합니다.
  */
 
+import gasCodeRaw from '../../gas/Code.gs?raw';
+import gasManifestRaw from '../../gas/appsscript.json?raw';
+
 export const DEFAULT_GOOGLE_CLIENT_ID =
   '1095632072504-ijtmagk1fblel9i8d5oglj0e4d846f3q.apps.googleusercontent.com';
 
@@ -19,9 +22,14 @@ const STUDENT_TEXT_MARKER = '━━━ [학생 작성 본문] ━━━';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/drive.file',
+  // 학생 제출 중계기(GAS 웹 앱)를 교사 시트에 자동 생성·배포하기 위한 권한
+  'https://www.googleapis.com/auth/script.projects',
+  'https://www.googleapis.com/auth/script.deployments',
   'https://www.googleapis.com/auth/userinfo.email',
   'https://www.googleapis.com/auth/userinfo.profile'
 ].join(' ');
+
+const SCOPE_CONSENT_KEY = 'sseudam_scope_consent_v2';
 
 let gisLoadedPromise = null;
 
@@ -76,6 +84,19 @@ export async function loginTeacherWithGoogle(clientId) {
             return;
           }
           const accessToken = tokenResponse.access_token;
+          // 새 권한(Apps Script 배포)이 실제로 허용됐는지 확인하고, 허용됐다면 동의 완료 표시를 남깁니다.
+          try {
+            if (
+              window.google.accounts.oauth2.hasGrantedAllScopes(
+                tokenResponse,
+                ...SCOPES.split(' ')
+              )
+            ) {
+              localStorage.setItem(SCOPE_CONSENT_KEY, '1');
+            }
+          } catch {
+            /* 확인 실패는 무시 */
+          }
           try {
             const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
               headers: { Authorization: `Bearer ${accessToken}` }
@@ -100,7 +121,11 @@ export async function loginTeacherWithGoogle(clientId) {
         }
       });
 
-      tokenClient.requestAccessToken({ prompt: 'select_account' });
+      // 새 권한이 아직 동의된 적 없으면 동의 화면을 반드시 띄웁니다. (이후엔 계정 선택만)
+      const needsConsent = !localStorage.getItem(SCOPE_CONSENT_KEY);
+      tokenClient.requestAccessToken({
+        prompt: needsConsent ? 'select_account consent' : 'select_account'
+      });
     } catch (err) {
       reject(err);
     }
@@ -147,6 +172,61 @@ export async function ensureRootFolder(accessToken) {
     })
   });
   return created.id;
+}
+
+/**
+ * 학생 제출 중계기(GAS 웹 앱)를 교사의 [쓰담] 시트에 자동으로 만들고 웹 앱으로 배포합니다.
+ * (Apps Script API: projects.create → updateContent → versions.create → deployments.create)
+ * 교사가 직접 코드를 붙여넣거나 배포할 필요가 없습니다.
+ */
+export async function deployStudentRelayWebApp(accessToken, spreadsheetId) {
+  if (!spreadsheetId) throw new Error('시트가 아직 준비되지 않았습니다.');
+  const base = 'https://script.googleapis.com/v1/projects';
+
+  try {
+    const project = await googleFetch(base, accessToken, {
+      method: 'POST',
+      body: JSON.stringify({ title: '[쓰담] 학생 제출 중계기', parentId: spreadsheetId })
+    });
+    const scriptId = project.scriptId;
+
+    await googleFetch(`${base}/${scriptId}/content`, accessToken, {
+      method: 'PUT',
+      body: JSON.stringify({
+        files: [
+          { name: 'Code', type: 'SERVER_JS', source: gasCodeRaw },
+          { name: 'appsscript', type: 'JSON', source: gasManifestRaw }
+        ]
+      })
+    });
+
+    const version = await googleFetch(`${base}/${scriptId}/versions`, accessToken, {
+      method: 'POST',
+      body: JSON.stringify({ description: '쓰담 자동 배포' })
+    });
+
+    const deployment = await googleFetch(`${base}/${scriptId}/deployments`, accessToken, {
+      method: 'POST',
+      body: JSON.stringify({
+        versionNumber: version.versionNumber,
+        manifestFileName: 'appsscript',
+        description: '쓰담 학생 제출 웹 앱'
+      })
+    });
+
+    const webApp = (deployment.entryPoints || []).find((e) => e.webApp?.url);
+    const gasUrl = webApp?.webApp?.url || '';
+    if (!gasUrl) throw new Error('웹 앱 주소를 받지 못했습니다.');
+    return { scriptId, gasUrl };
+  } catch (err) {
+    const msg = String(err.message || err);
+    if (msg.includes('Apps Script API has not been used') || msg.includes('(403)')) {
+      const e = new Error('APPS_SCRIPT_API_DISABLED');
+      e.detail = msg;
+      throw e;
+    }
+    throw err;
+  }
 }
 
 /**

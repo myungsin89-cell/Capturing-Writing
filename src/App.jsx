@@ -7,6 +7,7 @@ import {
   DEFAULT_GOOGLE_CLIENT_ID,
   loginTeacherWithGoogle,
   ensureTeacherSpreadsheet,
+  deployStudentRelayWebApp,
   loadFullStateFromSpreadsheet,
   saveFullStateToSpreadsheet,
   ensureAndSyncStudentGoogleDoc,
@@ -364,6 +365,7 @@ export default function App() {
         config
       });
 
+      let remoteGasUrl = '';
       if (!sheetInfo.isNew) {
         const rawLoaded = await loadFullStateFromSpreadsheet(
           auth.accessToken,
@@ -405,6 +407,7 @@ export default function App() {
         setTopics(loadedTopics);
         setStudents(loadedStudents);
         setQuestions(loadedQuestions);
+        remoteGasUrl = loaded.config?.gasUrl || '';
         setConfig((prev) => ({ ...prev, ...loadedConfig }));
 
         if (migration.migrated) {
@@ -427,13 +430,64 @@ export default function App() {
         }));
       }
 
+      // 학생 제출 중계기(GAS 웹 앱) 자동 생성·배포: 이미 연결되어 있으면 건너뜁니다.
+      const relay = await ensureStudentRelay(
+        auth.accessToken,
+        sheetInfo.spreadsheetId,
+        remoteGasUrl
+      );
+
       return {
         ok: true,
         mode: 'google',
         isNewSheet: sheetInfo.isNew,
         spreadsheetUrl: sheetInfo.spreadsheetUrl,
-        user: auth.user
+        user: auth.user,
+        relayStatus: relay.status
       };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  // 학생 제출 중계기 연결 보장 (status: 'existing' | 'created' | 'api-disabled' | 'failed')
+  const ensureStudentRelay = async (accessToken, spreadsheetId, remoteGasUrl = '') => {
+    const existingUrl =
+      gasUrl ||
+      localStorage.getItem(STORAGE_KEYS.GAS_URL) ||
+      remoteGasUrl ||
+      config.gasUrl ||
+      '';
+    if (existingUrl) {
+      if (existingUrl !== gasUrl) setGasUrl(existingUrl);
+      localStorage.setItem(STORAGE_KEYS.GAS_URL, existingUrl);
+      return { status: 'existing', gasUrl: existingUrl };
+    }
+    try {
+      const { scriptId, gasUrl: createdUrl } = await deployStudentRelayWebApp(
+        accessToken,
+        spreadsheetId
+      );
+      setGasUrl(createdUrl);
+      localStorage.setItem(STORAGE_KEYS.GAS_URL, createdUrl);
+      setConfig((prev) => ({ ...prev, gasUrl: createdUrl, gasScriptId: scriptId }));
+      return { status: 'created', gasUrl: createdUrl };
+    } catch (err) {
+      console.warn('학생 제출 중계기 자동 생성 실패:', err);
+      return {
+        status: err.message === 'APPS_SCRIPT_API_DISABLED' ? 'api-disabled' : 'failed'
+      };
+    }
+  };
+
+  // GAS 설정 모달의 [자동으로 연결하기] 버튼
+  const handleAutoSetupRelay = async () => {
+    if (!googleAuth?.accessToken || !config.spreadsheetId) {
+      return { status: 'failed' };
+    }
+    setIsSyncing(true);
+    try {
+      return await ensureStudentRelay(googleAuth.accessToken, config.spreadsheetId);
     } finally {
       setIsSyncing(false);
     }
@@ -1363,6 +1417,7 @@ export default function App() {
         onClose={() => setIsSetupModalOpen(false)}
         gasUrl={gasUrl}
         onSaveGasUrl={handleSaveGasUrl}
+        onAutoSetup={handleAutoSetupRelay}
         onTestConnection={() => callGasApi({ action: 'ping' })}
         isSyncing={isSyncing}
       />

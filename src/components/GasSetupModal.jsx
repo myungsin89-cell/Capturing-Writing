@@ -14,13 +14,35 @@ export default function GasSetupModal({
   gasUrl,
   onSaveGasUrl,
   onTestConnection,
+  onAutoSetup,
   isSyncing
 }) {
   const [inputUrl, setInputUrl] = useState(gasUrl || '');
   const [copied, setCopied] = useState(false);
   const [showCodePreview, setShowCodePreview] = useState(false);
+  const [autoBusy, setAutoBusy] = useState(false);
+  const [autoMsg, setAutoMsg] = useState('');
+  const [autoStatus, setAutoStatus] = useState('');
 
   if (!isOpen) return null;
+
+  const handleAutoSetup = async () => {
+    setAutoBusy(true);
+    setAutoMsg('');
+    try {
+      const res = await onAutoSetup();
+      setAutoStatus(res?.status || '');
+      if (res?.status === 'api-disabled') {
+        setAutoMsg('구글 설정에서 Apps Script API를 켜 주세요. 켠 뒤 다시 눌러 주세요.');
+      } else if (res?.status === 'failed') {
+        setAutoMsg('자동 연결에 실패했습니다. 아래 직접 연결하기를 이용해 주세요.');
+      } else if (res?.gasUrl) {
+        setInputUrl(res.gasUrl);
+      }
+    } finally {
+      setAutoBusy(false);
+    }
+  };
 
   const handleCopyCode = async () => {
     try {
@@ -62,8 +84,62 @@ export default function GasSetupModal({
           </button>
         </div>
 
-        {/* 3단계 연결 안내 */}
-        <div className="mt-4 space-y-3">
+        {/* 자동 연결 */}
+        <div className="mt-4 p-4 rounded-2xl bg-[#F2F9F5] border border-[#52B788] space-y-2.5">
+          <div className="text-sm font-bold text-[#1B4332]">
+            {gasUrl ? '학생 제출이 연결되어 있어요' : '버튼 한 번으로 학생 제출을 자동 연결해요'}
+          </div>
+          <p className="text-xs text-[#475569] leading-relaxed">
+            선생님 구글 드라이브에 학생 제출용 중계기를 자동으로 만들고 배포합니다.
+            코드 복사나 배포 설정은 필요 없습니다.
+          </p>
+          {onAutoSetup && !gasUrl && (
+            <button
+              type="button"
+              disabled={isSyncing || autoBusy}
+              onClick={handleAutoSetup}
+              className="sketch-btn-primary px-4 py-2.5 text-xs sm:text-sm font-bold disabled:opacity-60"
+            >
+              {autoBusy ? '연결 중...' : '자동으로 연결하기'}
+            </button>
+          )}
+          {autoMsg && (
+            <div className="text-xs text-[#92400E] bg-[#FFFBEB] border border-[#F59E0B] rounded-xl p-2.5 leading-relaxed">
+              {autoMsg}
+              {autoStatus === 'api-disabled' && (
+                <a
+                  href="https://script.google.com/home/usersettings"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="ml-1 font-bold underline"
+                >
+                  Apps Script 설정 열기
+                </a>
+              )}
+            </div>
+          )}
+          {gasUrl && (
+            <div className="text-xs text-[#2D6A4F] leading-relaxed">
+              처음 한 번은 아래 버튼으로 승인해 주세요. 열린 창에서 계정 선택 후
+              [고급] → [이동] → [허용]을 누르면 끝입니다.
+              <a
+                href={gasUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="ml-1 font-bold underline"
+              >
+                1회 승인하러 가기
+              </a>
+            </div>
+          )}
+        </div>
+
+        {/* 수동 연결 안내 (자동 연결이 안 될 때만 펼쳐서 사용) */}
+        <details className="mt-3">
+          <summary className="text-xs font-semibold text-[#64748B] cursor-pointer">
+            자동 연결이 안 되나요? 직접 연결하기
+          </summary>
+        <div className="mt-3 space-y-3">
           {/* 1단계 */}
           <div className="p-3.5 rounded-2xl bg-[#FBFBF9] border border-[#D8F3DC] flex items-start justify-between gap-3 flex-wrap sm:flex-nowrap">
             <div className="flex items-start gap-2.5">
@@ -164,6 +240,7 @@ export default function GasSetupModal({
             </div>
           </div>
         </div>
+        </details>
 
         {/* URL 입력 폼 */}
         <form onSubmit={handleSave} className="mt-5 pt-4 border-t border-[#E2E8F0]">
