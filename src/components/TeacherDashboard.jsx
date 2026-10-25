@@ -86,6 +86,7 @@ export default function TeacherDashboard({
   };
   const [showCreateClassModal, setShowCreateClassModal] = useState(false);
   const [isLoggingInGoogle, setIsLoggingInGoogle] = useState(false);
+  const [showPrivacyModal, setShowPrivacyModal] = useState(false);
 
   // 학급 또는 글쓰기 주제 삭제 확인 모달 상태 ({ type: 'class' | 'topic', id, title, studentCount, topicCount } | null)
   const [deleteConfirmTarget, setDeleteConfirmTarget] = useState(null);
@@ -543,6 +544,98 @@ export default function TeacherDashboard({
     );
   };
 
+  const renderPrivacyModal = () => {
+    if (!showPrivacyModal) return null;
+    return (
+      <div
+        className="fixed inset-0 z-50 bg-black/55 backdrop-blur-[2px] flex items-center justify-center p-4"
+        onClick={() => setShowPrivacyModal(false)}
+      >
+        <div
+          className="w-full max-w-lg max-h-[88vh] flex flex-col sketch-card bg-white p-6 sm:p-7 space-y-4 animate-in fade-in zoom-in-95 duration-150 overflow-hidden"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 헤더 */}
+          <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0] shrink-0">
+            <div className="flex items-center gap-2.5">
+              <span className="p-2 rounded-xl bg-[#F2F9F5] text-[#1B4332] border border-[#B7E4C7]">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+              </span>
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-[#1B4332]">
+                  개인정보 처리방침 및 데이터 안전 안내
+                </h3>
+                <p className="text-xs text-[#64748B]">
+                  '쓰담'은 학교 현장과 학생들의 개인정보를 가장 소중히 여깁니다.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowPrivacyModal(false)}
+              className="p-1.5 rounded-lg text-[#64748B] hover:text-[#1B4332] hover:bg-[#F2F9F5] transition cursor-pointer"
+              title="닫기"
+            >
+              ✕
+            </button>
+          </div>
+
+          {/* 본문 스크롤 영역 */}
+          <div className="flex-1 overflow-y-auto space-y-3 pr-1 text-xs sm:text-sm text-[#334155] leading-relaxed">
+            <div className="p-3.5 rounded-xl bg-[#F8FAF9] border border-[#E2E8F0] space-y-1">
+              <div className="font-bold text-[#1B4332] flex items-center gap-1.5">
+                <span>1. 외부 중앙 서버 없는 100% 교사 드라이브 저장</span>
+              </div>
+              <p className="text-xs text-[#64748B] leading-relaxed break-keep">
+                '쓰담'은 외부 데이터베이스나 별도의 회원 서버를 운영하지 않습니다. 학생들의 이름, 번호, 작성한 글, 교사 첨삭 등 모든 교육 활동 데이터는 <b>오직 로그인하신 선생님 본인의 구글 드라이브(Google Sheets & Docs)에만 직접 보관</b>됩니다.
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[#F8FAF9] border border-[#E2E8F0] space-y-1">
+              <div className="font-bold text-[#1B4332] flex items-center gap-1.5">
+                <span>2. 구글 계정 권한(OAuth)의 최소 사용</span>
+              </div>
+              <p className="text-xs text-[#64748B] leading-relaxed break-keep">
+                구글 로그인 시 요청하는 권한은 오직 선생님 드라이브 내 <b>[쓰담] 전용 폴더 및 관련 시트·독스 파일의 생성과 수정에만 국한</b>됩니다. 선생님의 다른 개인 문서, 이메일, 개인 사진 등에는 일체 접근하지 못하며 조회 권한도 없습니다.
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[#F8FAF9] border border-[#E2E8F0] space-y-1">
+              <div className="font-bold text-[#1B4332] flex items-center gap-1.5">
+                <span>3. 학생 개인정보 수집 및 회원가입 제로</span>
+              </div>
+              <p className="text-xs text-[#64748B] leading-relaxed break-keep">
+                학생들은 별도의 회원가입이나 계정 생성 없이, 선생님이 발급한 번호와 이름으로만 참여합니다. 학생의 주민번호, 연락처, 기기 식별값 등 어떠한 민감 개인정보도 수집하지 않습니다.
+              </p>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-[#F8FAF9] border border-[#E2E8F0] space-y-1">
+              <div className="font-bold text-[#1B4332] flex items-center gap-1.5">
+                <span>4. 제3자 제공 및 외부 유출 차단</span>
+              </div>
+              <p className="text-xs text-[#64748B] leading-relaxed break-keep">
+                서비스 개발자나 제3자는 선생님 학급의 데이터에 기술적으로 접근할 수 없습니다. 모든 데이터의 소유권과 관리 권한은 전적으로 담당 선생님에게 있으며, 언제든 구글 드라이브에서 직접 백업하거나 완전히 삭제하실 수 있습니다.
+              </p>
+            </div>
+          </div>
+
+          {/* 하단 닫기 버튼 */}
+          <div className="pt-2 border-t border-[#E2E8F0] flex justify-end shrink-0">
+            <button
+              type="button"
+              onClick={() => setShowPrivacyModal(false)}
+              className="sketch-btn px-5 py-2 text-xs sm:text-sm font-bold bg-[#1B4332] text-white rounded-xl cursor-pointer hover:bg-[#2D6A4F] transition"
+            >
+              확인했습니다
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // ============================================================================
   // 단계 1: 교사 구글 로그인 화면 (구글 로그인 1번으로 내 드라이브에 시트·폴더 자동 생성!)
   // ============================================================================
@@ -556,27 +649,41 @@ export default function TeacherDashboard({
           </div>
         )}
 
-        <div className="w-full max-w-md sketch-card bg-white p-8 sm:p-10 space-y-6 text-center">
+        {renderPrivacyModal()}
+
+        <div className="w-full max-w-md sketch-card bg-white p-7 sm:p-9 space-y-5 text-center">
           <div className="flex flex-col items-center">
-            <HandDrawnNotebookLogo size={64} isOpen={true} />
+            <HandDrawnNotebookLogo size={60} isOpen={true} />
             <span className="mt-3 px-3 py-1 rounded-full bg-[#F2F9F5] border border-[#B7E4C7] text-xs font-bold text-[#1B4332]">
-              교사 전용 스튜디오
+              다정한 글쓰기 스튜디오
             </span>
-            <h1 className="mt-3 text-2xl font-bold text-[#1B4332] font-editorial-serif">
-              선생님 구글 로그인
+            <h1 className="mt-2 text-2xl sm:text-3xl font-bold text-[#1B4332] font-editorial-serif tracking-tight">
+              쓰담
             </h1>
-            <p className="mt-1.5 text-xs sm:text-sm text-[#64748B] leading-relaxed">
-              구글 계정으로 시작하면 <b>내 구글 드라이브에 [쓰담] 시트와 독스 폴더가 자동 생성</b>되며, 담당 학급을 선택해 들어갈 수 있습니다.
-            </p>
+
+            {/* 쓰담의 이름 뜻과 감성 소개 */}
+            <div className="mt-3 space-y-1.5">
+              <p className="text-sm sm:text-base font-bold text-[#1B4332] font-editorial-serif leading-snug break-keep">
+                “아이들이 쓴 소중한 마음을 담고,<br />서툰 생각도 다정하게 쓰담쓰담”
+              </p>
+              <p className="text-xs text-[#4A5568] leading-relaxed break-keep pt-0.5">
+                아이들이 <b>‘쓴 것을 정성스레 담는(쓰담)’</b> 그릇이자,<br />
+                아이들의 마음과 성장을 <b>‘다정하게 쓰다듬는(쓰담)’</b><br />
+                선생님과 아이들의 글쓰기 교실입니다.
+              </p>
+            </div>
           </div>
 
+          <div className="w-full h-px bg-[#E2E8F0] my-1" />
+
+          {/* 구글 로그인 버튼 */}
           <button
             type="button"
             disabled={isLoggingInGoogle}
             onClick={handleGoogleLogin}
-            className="w-full h-14 rounded-2xl bg-white hover:bg-[#F2F9F5] border-2 border-[#1B4332] shadow-xs flex items-center justify-center gap-3 text-base font-bold text-[#1E293B] cursor-pointer transition disabled:opacity-60"
+            className="w-full h-13 rounded-2xl bg-white hover:bg-[#F2F9F5] border-2 border-[#1B4332] shadow-xs flex items-center justify-center gap-3 text-sm sm:text-base font-bold text-[#1E293B] cursor-pointer transition disabled:opacity-60"
           >
-            <svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
               <path
                 fill="#4285F4"
                 d="M23.49 12.27c0-.79-.07-1.54-.19-2.27H12v4.51h6.47c-.29 1.48-1.14 2.73-2.4 3.58v3h3.86c2.26-2.09 3.56-5.17 3.56-8.82z"
@@ -600,6 +707,30 @@ export default function TeacherDashboard({
                 : 'Google 계정으로 시작하기'}
             </span>
           </button>
+
+          {/* 로그인 버튼 아래: 드라이브 시트/폴더 자동 생성 안내 */}
+          <div className="p-3.5 rounded-xl bg-[#F2F9F5] border border-[#B7E4C7] text-left space-y-1">
+            <div className="text-xs font-bold text-[#1B4332] flex items-center gap-1.5">
+              <span>첫 시작 안내</span>
+            </div>
+            <p className="text-xs text-[#4A5568] leading-relaxed break-keep">
+              구글 계정으로 연결하면 <b>선생님 구글 드라이브</b>에 우리 반 전용 <b>[쓰담] 기록 시트와 독스 폴더가 자동 생성</b>되어, 별도의 번거로운 설정 없이 바로 수업을 시작할 수 있습니다.
+            </p>
+          </div>
+
+          {/* 개인정보 처리방침 링크 */}
+          <div className="pt-1">
+            <button
+              type="button"
+              onClick={() => setShowPrivacyModal(true)}
+              className="text-xs text-[#64748B] hover:text-[#1B4332] underline underline-offset-4 inline-flex items-center gap-1.5 transition cursor-pointer"
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+              <span>개인정보 처리방침 및 데이터 안전 안내</span>
+            </button>
+          </div>
         </div>
       </div>
     );
