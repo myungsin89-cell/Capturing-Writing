@@ -662,14 +662,9 @@ export default function TeacherDashboard({
             </h1>
 
             {/* 쓰담의 이름 뜻과 감성 소개 */}
-            <div className="mt-3 space-y-1.5">
+            <div className="mt-3">
               <p className="text-sm sm:text-base font-bold text-[#1B4332] font-editorial-serif leading-snug break-keep">
                 “아이들이 쓴 소중한 마음을 담고,<br />서툰 생각도 다정하게 쓰담쓰담”
-              </p>
-              <p className="text-xs text-[#4A5568] leading-relaxed break-keep pt-0.5">
-                아이들이 <b>‘쓴 것을 정성스레 담는(쓰담)’</b> 그릇이자,<br />
-                아이들의 마음과 성장을 <b>‘다정하게 쓰다듬는(쓰담)’</b><br />
-                선생님과 아이들의 글쓰기 교실입니다.
               </p>
             </div>
           </div>
