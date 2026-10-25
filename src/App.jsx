@@ -495,6 +495,19 @@ export default function App() {
     }
   };
 
+  // GAS 설정 모달의 [자동으로 연결하기] 버튼
+  const handleAutoSetupRelay = async () => {
+    if (!googleAuth?.accessToken || !config.spreadsheetId) {
+      return { status: 'failed' };
+    }
+    setIsSyncing(true);
+    try {
+      return await ensureStudentRelay(googleAuth.accessToken, config.spreadsheetId);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const callGasApi = useCallback(
     async (payload) => {
       const targetSheetId = urlSheetId || config.spreadsheetId || '';
