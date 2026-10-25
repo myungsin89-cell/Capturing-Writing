@@ -1,0 +1,139 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --bg-cream: #FBFBF9;
+    --forest-primary: #1B4332;
+    --ink-deep: #122E22;
+    --sage-secondary: #2D6A4F;
+    --mint-accent: #52B788;
+    --mint-tint: #F2F9F5;
+    --mint-border: #D8F3DC;
+    --ink-charcoal: #1E293B;
+    --ink-border: #2D3748;
+  }
+
+  html {
+    font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    letter-spacing: -0.02em;
+    line-height: 1.6;
+    word-break: keep-all;
+    overflow-wrap: break-word;
+    scrollbar-gutter: stable;
+    background-color: #FBFBF9;
+    color: #1E293B;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    min-height: 100dvh;
+    background-color: #FBFBF9;
+    background-image: radial-gradient(rgba(27, 67, 50, 0.04) 1.2px, transparent 0);
+    background-size: 24px 24px;
+  }
+}
+
+/* 감성 한자 및 에디토리얼 세리프 */
+.font-editorial-serif {
+  font-family: "Gowun Batang", "Noto Serif KR", serif;
+}
+
+/* Hand-drawn organic sketch card */
+.sketch-card {
+  background-color: #FFFFFF;
+  border: 1.5px solid #2D3748;
+  border-radius: 18px 16px 20px 15px / 15px 19px 16px 18px;
+  box-shadow: 3px 4px 0px rgba(27, 67, 50, 0.12);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms ease,
+    background-color 180ms ease;
+}
+
+.sketch-card-hover:hover {
+  border-color: #1B4332;
+  box-shadow: 4px 5px 0px rgba(27, 67, 50, 0.22);
+}
+
+.sketch-card-interactive:active {
+  transform: translateY(1px);
+  box-shadow: 2px 2px 0px rgba(27, 67, 50, 0.16);
+}
+
+/* Primary Forest Green Button */
+.sketch-btn-primary {
+  background-color: #1B4332;
+  color: #FFFFFF;
+  border: 1.5px solid #122E22;
+  border-radius: 14px 16px 15px 13px / 14px 13px 16px 15px;
+  box-shadow: 2px 3px 0px rgba(18, 46, 34, 0.28);
+  transition: background-color 160ms ease, transform 120ms ease, box-shadow 120ms ease;
+  cursor: pointer;
+}
+
+.sketch-btn-primary:hover:not(:disabled) {
+  background-color: #2D6A4F;
+}
+
+.sketch-btn-primary:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 1px 1.5px 0px rgba(18, 46, 34, 0.28);
+}
+
+.sketch-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Secondary Ivory/Mint Button */
+.sketch-btn-secondary {
+  background-color: #FFFFFF;
+  color: #1B4332;
+  border: 1.5px solid #1B4332;
+  border-radius: 13px 15px 14px 16px / 15px 13px 16px 14px;
+  box-shadow: 2px 3px 0px rgba(27, 67, 50, 0.12);
+  transition: background-color 160ms ease, transform 120ms ease, box-shadow 120ms ease;
+  cursor: pointer;
+}
+
+.sketch-btn-secondary:hover:not(:disabled) {
+  background-color: #F2F9F5;
+}
+
+.sketch-btn-secondary:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow: 1px 1.5px 0px rgba(27, 67, 50, 0.14);
+}
+
+.sketch-btn-secondary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* Danger / Deadline Coral Button */
+.sketch-btn-coral {
+  background-color: #FEF2F2;
+  color: #DC2626;
+  border: 1.5px solid #DC2626;
+  border-radius: 14px 13px 16px 15px / 15px 16px 13px 14px;
+  box-shadow: 2px 3px 0px rgba(220, 38, 38, 0.14);
+  transition: background-color 160ms ease, transform 120ms ease, box-shadow 120ms ease;
+  cursor: pointer;
+}
+
+.sketch-btn-coral:hover:not(:disabled) {
+  background-color: #FEE2E2;
+}
+
+/* 원고지 / 노트 줄무늬 효과 */
+.lined-paper {
+  background-color: #FBFBF9;
+  background-image: linear-gradient(transparent 31px, rgba(27, 67, 50, 0.08) 32px);
+  background-size: 100% 32px;
+  line-height: 32px;
+}
+
+/* 하단 고정 바 모바일 세이프 에어리어 */
+.safe-bottom-bar {
+  padding-bottom: max(0.875rem, env(safe-area-inset-bottom));
+}

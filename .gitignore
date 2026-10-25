@@ -1,0 +1,19 @@
+node_modules/
+dist/
+.vercel/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Logs and editor files
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary browser/test profiles
+.chrome-verify-profile/
+.edge-verify-profile/
