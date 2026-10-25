@@ -13,7 +13,8 @@ import {
   FileText,
   QrCode,
   Maximize2,
-  Minimize2
+  Minimize2,
+  ExternalLink
 } from 'lucide-react';
 
 export default function StudentShareModal({
