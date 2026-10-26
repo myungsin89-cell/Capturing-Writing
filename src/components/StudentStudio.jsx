@@ -1,4 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import useStudentDraft from '../hooks/useStudentDraft';
+import { getDraftBase, getDraftOwner } from '../utils/studentDraftStorage';
+import DraftRecoveryDialog from './DraftRecoveryDialog';
 import {
   HandDrawnNotebookLogo,
   HandDrawnPencilIcon,
@@ -26,7 +29,10 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  History,
+  Copy,
+  Download
 } from 'lucide-react';
 
 export default function StudentStudio({
@@ -61,14 +67,11 @@ export default function StudentStudio({
   // 대형 나란히 비교 모달 열림 상태
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
 
-  const [editorText, setEditorText] = useState('');
-  const [pieceTitle, setPieceTitle] = useState('');
   const [questionInput, setQuestionInput] = useState('');
   const [toastMsg, setToastMsg] = useState('');
   const [showGreenText, setShowGreenText] = useState(false);
   const [viewingPageIdx, setViewingPageIdx] = useState(null); // null이면 현재 작성·수정 공책, 숫자면 해당 차수 글 보기
-  const [lastSavedTime, setLastSavedTime] = useState(''); // 기기 로컬 자동 보관 시각
-  const [restoredBannerMsg, setRestoredBannerMsg] = useState(''); // 이전 작성글 자동 복원 안내
+  const [recoveryData, setRecoveryData] = useState(null);
   const textareaRef = useRef(null);
   const questionSubmittingRef = useRef(false);
 
@@ -76,19 +79,10 @@ export default function StudentStudio({
     students.find((s) => String(s.number) === String(activeStudent?.number)) ||
     activeStudent;
 
-  // 구글 시트 요청 없이 기기 브라우저(localStorage)에만 안전하게 보관하는 키
-  const getDraftStorageKey = useCallback(
-    (topicId) => {
-      if (!currentStudent?.number) return null;
-      return `sseudam_local_draft_${String(currentStudent.number).trim()}_${topicId || 'default'}`;
-    },
-    [currentStudent?.number]
-  );
-
   // 학생은 책장부터, 교사 미리보기는 선택한 주제 공책부터 바로 보여줍니다.
   useEffect(() => {
     setOpenedTopicId(isTeacherPreview && initialTopicId ? initialTopicId : null);
-  }, [currentStudent?.number, isTeacherPreview, initialTopicId]);
+  }, [currentStudent?.classId, currentStudent?.number, currentStudent?.name, isTeacherPreview, initialTopicId]);
 
   // 특정 주제에 대한 이 학생의 글 데이터 가져오기 헬퍼
   const getStudentDataForTopic = (topic) => {
@@ -114,6 +108,18 @@ export default function StudentStudio({
   const selectedTopic = topics.find((t) => t.id === openedTopicId) || null;
   const topicStudentData = getStudentDataForTopic(selectedTopic);
   const draftPages = getStudentDraftPages(topicStudentData);
+  const draftBase = getDraftBase(topicStudentData || {});
+  const canEditDraft = Boolean(topicStudentData) && !isTeacherPreview && !selectedTopic?.classLocked && !isSubmitting &&
+    ((!topicStudentData.locked && !isFinalWritingStatus(topicStudentData.status)) || Boolean(topicStudentData.recalled) ||
+      (isFinalWritingStatus(topicStudentData.status) && isEditingCompleted));
+  const draft = useStudentDraft({
+    owner: getDraftOwner({ spreadsheetId: config.spreadsheetId || '', classId: config.activeClassId || '', student: currentStudent, topicId: openedTopicId }),
+    base: draftBase, enabled: !isTeacherPreview && Boolean(topicStudentData), editable: canEditDraft,
+    editingCompleted: isEditingCompleted, isCompleted: isFinalWritingStatus(topicStudentData?.status)
+  });
+  const { text: editorText, pieceTitle, setText: setEditorText, setPieceTitle } = draft;
+  const lastSavedTime = draft.savedAt ? new Date(draft.savedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+  const restoredBannerMsg = draft.notice;
   const displayPieceTitle = String(
     pieceTitle || topicStudentData?.pieceTitle || ''
   ).trim();
@@ -128,144 +134,31 @@ export default function StudentStudio({
 
   const currentWritingStage = Math.max(1, draftPages.length + 1);
 
-  // 공책 열 때: 제출본을 불러오되, 기기 로컬에 작성 중이던 미제출 글이 있다면 안전하게 복원
+  // 제출본/공책이 바뀔 때만 보기 상태를 초기화합니다. 입력 내용은 전용 저장 훅에서 복원합니다.
   useEffect(() => {
     if (!topicStudentData) return;
     setHighlightedQuote('');
     setShowGreenText(false);
     setViewingPageIdx(null);
-    setRestoredBannerMsg('');
-    setIsEditingCompleted(false);
+    setIsEditingCompleted(Boolean(draft.loadState?.editingCompleted));
     setIsRecalled(Boolean(topicStudentData.recalled));
-
-    const pages = getStudentDraftPages(topicStudentData);
-    const submittedLatest = pages.length > 0 ? pages[pages.length - 1].text : '';
-    const submittedTitle = topicStudentData.pieceTitle || '';
-
-    let initialText =
-      submittedLatest ||
-      topicStudentData.draft3 ||
-      topicStudentData.draft2 ||
-      topicStudentData.draft1 ||
-      '';
-    let initialTitle = submittedTitle;
-
-    // 교사 미리보기가 아닐 때, 기기 로컬에 저장되어 있던 작성 중인 글이 있는지 확인
-    if (!isTeacherPreview && openedTopicId) {
-      const storageKey = getDraftStorageKey(openedTopicId);
-      if (storageKey) {
-        try {
-          const raw = localStorage.getItem(storageKey);
-          if (raw) {
-            const parsed = JSON.parse(raw);
-            const hasUnsubmittedChanges =
-              (parsed.text !== undefined && parsed.text !== submittedLatest) ||
-              (parsed.pieceTitle !== undefined && parsed.pieceTitle !== submittedTitle);
-
-            if (hasUnsubmittedChanges && (parsed.text?.trim() || parsed.pieceTitle?.trim())) {
-              initialText = parsed.text ?? initialText;
-              initialTitle = parsed.pieceTitle ?? initialTitle;
-              setLastSavedTime(parsed.savedAtStr || '방금');
-              setRestoredBannerMsg(
-                `실수로 창이 닫혔거나 나갔던 글(${parsed.savedAtStr || '방금'})을 안전하게 복원했어요!`
-              );
-            }
-          }
-        } catch (e) {
-          console.warn('임시 글 복원 참고:', e);
-        }
-      }
-    }
-
-    setPieceTitle(initialTitle);
-    setEditorText(initialText);
-  }, [
-    currentStudent?.number,
-    openedTopicId,
-    topicStudentData?.status,
-    topicStudentData?.pieceTitle,
-    isTeacherPreview,
-    getDraftStorageKey
-  ]);
-
-  // 글 작성 중일 때: 구글 시트 요청 없이 기기(브라우저 localStorage)에 실시간 자동 보관 (600ms 디바운스)
-  useEffect(() => {
-    if (isTeacherPreview || !openedTopicId || !currentStudent?.number) return;
-    const storageKey = getDraftStorageKey(openedTopicId);
-    if (!storageKey) return;
-
-    const pages = getStudentDraftPages(topicStudentData);
-    const submittedLatest = pages.length > 0 ? pages[pages.length - 1].text : '';
-    const submittedTitle = topicStudentData?.pieceTitle || '';
-
-    const hasChanges =
-      editorText !== submittedLatest || pieceTitle !== submittedTitle;
-
-    const timer = setTimeout(() => {
-      try {
-        if (hasChanges && (editorText.trim() || pieceTitle.trim())) {
-          const nowStr = new Date().toLocaleTimeString('ko-KR', {
-            hour: '2-digit',
-            minute: '2-digit'
-          });
-          localStorage.setItem(
-            storageKey,
-            JSON.stringify({
-              pieceTitle,
-              text: editorText,
-              savedAt: Date.now(),
-              savedAtStr: nowStr
-            })
-          );
-          setLastSavedTime(nowStr);
-        } else if (!hasChanges) {
-          localStorage.removeItem(storageKey);
-          setLastSavedTime('');
-        }
-      } catch (e) {
-        console.warn('로컬 임시 저장 참고:', e);
-      }
-    }, 600);
-
-    return () => clearTimeout(timer);
-  }, [
-    editorText,
-    pieceTitle,
-    openedTopicId,
-    currentStudent?.number,
-    isTeacherPreview,
-    topicStudentData,
-    getDraftStorageKey
-  ]);
-
-  // 실수로 창 닫기나 뒤로가기 시 이탈 방지 브라우저 경고 (제출하지 않은 글 보호)
-  useEffect(() => {
-    if (isTeacherPreview || !openedTopicId) return;
-    const pages = getStudentDraftPages(topicStudentData);
-    const submittedLatest = pages.length > 0 ? pages[pages.length - 1].text : '';
-    const submittedTitle = topicStudentData?.pieceTitle || '';
-
-    const hasUnsubmittedChanges =
-      (editorText.trim() !== submittedLatest.trim() ||
-        pieceTitle.trim() !== submittedTitle.trim()) &&
-      (editorText.trim() || pieceTitle.trim());
-
-    if (!hasUnsubmittedChanges) return;
-
-    const handleBeforeUnload = (e) => {
-      e.preventDefault();
-      e.returnValue = '';
-    };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', handleBeforeUnload);
-    };
-  }, [editorText, pieceTitle, openedTopicId, topicStudentData, isTeacherPreview]);
+    setRecoveryData(null);
+  }, [draft.loadState?.id, topicStudentData?.status, topicStudentData?.recalled]);
 
   const showToast = (msg) => {
     setToastMsg(msg);
     setTimeout(() => setToastMsg(''), 3000);
+  };
+
+  const copyCurrentDraft = async () => {
+    try { await navigator.clipboard.writeText(`${pieceTitle}\n\n${editorText}`); showToast('지금 글을 복사했어요. 다른 문서에 붙여 넣어 보관해 주세요.'); }
+    catch { showToast('자동 복사가 허용되지 않았어요. 제목과 본문을 직접 선택해 복사해 주세요.'); }
+  };
+  const downloadCurrentDraft = () => {
+    const url = URL.createObjectURL(new Blob([`${pieceTitle}\n\n${editorText}`], { type: 'text/plain;charset=utf-8' }));
+    const anchor = document.createElement('a'); anchor.href = url;
+    anchor.download = `${(pieceTitle || '쓰담 임시 글').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_')}.txt`;
+    anchor.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
 
   const handleLoginSubmit = async (e) => {
@@ -286,6 +179,7 @@ export default function StudentStudio({
   };
 
   const handleInsertParagraph = () => {
+    if (isSubmitting) return;
     setHighlightedQuote('');
     const el = textareaRef.current;
     if (!el) {
@@ -313,6 +207,7 @@ export default function StudentStudio({
       showToast('글을 먼저 작성해 주세요.');
       return;
     }
+    const submittedDraft = draft.captureSubmission();
     setIsSubmitting(true);
     try {
       const options = {
@@ -328,12 +223,7 @@ export default function StudentStudio({
         options
       );
       if (result?.ok) {
-        const storageKey = getDraftStorageKey(selectedTopic?.id);
-        if (storageKey) {
-          localStorage.removeItem(storageKey);
-        }
-        setLastSavedTime('');
-        setRestoredBannerMsg('');
+        draft.submitted(submittedDraft);
         setIsRecalled(false);
         setIsEditingCompleted(false);
         showToast(
@@ -603,8 +493,8 @@ export default function StudentStudio({
   // 화면 3: 책장에서 선택한 주제의 『와이드 글쓰기 공책 화면』
   // ============================================================================
   const isClassLocked = Boolean(selectedTopic?.classLocked);
-  const isTeacherLocked = Boolean(topicStudentData?.locked) && !isRecalled;
   const isFinalCompleted = isFinalWritingStatus(topicStudentData?.status);
+  const isTeacherLocked = Boolean(topicStudentData?.locked) && !isRecalled && !(isFinalCompleted && isEditingCompleted);
   const isLocked = isClassLocked || isTeacherLocked;
   const isReadOnly =
     isTeacherPreview ||
@@ -646,7 +536,8 @@ export default function StudentStudio({
             type="button"
             onClick={() => {
               if (isTeacherPreview) onLogoutStudent();
-              else setOpenedTopicId(null);
+              else if (draft.flush()) setOpenedTopicId(null);
+              else showToast('아직 기기에 저장되지 않았어요. 지금 글을 먼저 복사하거나 파일로 보관해 주세요.');
             }}
             className="sketch-btn-secondary px-3.5 py-2 text-xs sm:text-sm font-bold flex items-center gap-1.5 shrink-0"
           >
@@ -663,13 +554,14 @@ export default function StudentStudio({
           </h1>
         </div>
 
-        <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5">
           {isTeacherPreview && (
             <span className="px-3 py-1.5 rounded-xl bg-[#FEF3C7] border border-[#F59E0B] text-xs font-bold text-[#92400E] flex items-center gap-1.5">
               <BookOpen className="w-3.5 h-3.5" />
               교사 읽기 전용
             </span>
           )}
+          {!isTeacherPreview && <button type="button" disabled={isSubmitting} onClick={() => { draft.flush('recovery-open'); setRecoveryData(draft.recovery()); }} className="sketch-btn-secondary min-h-11 px-3 py-2 text-xs sm:text-sm font-bold flex items-center gap-2"><History className="h-4 w-4" aria-hidden="true" />이전 글 복구</button>}
           <button
             type="button"
             onClick={() => setIsDiffModalOpen(true)}
@@ -685,6 +577,8 @@ export default function StudentStudio({
           </button>
         </div>
       </div>
+
+      {draft.error && !isTeacherPreview && <div role="alert" className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-4 text-sm text-[#991B1B] space-y-3"><p className="font-bold">{draft.error}</p><div className="flex flex-wrap gap-2"><button type="button" onClick={copyCurrentDraft} className="sketch-btn-secondary min-h-11 px-3 py-2 font-bold flex items-center gap-2"><Copy className="h-4 w-4" aria-hidden="true" />지금 글 복사</button><button type="button" onClick={downloadCurrentDraft} className="sketch-btn-secondary min-h-11 px-3 py-2 font-bold flex items-center gap-2"><Download className="h-4 w-4" aria-hidden="true" />글 파일로 보관</button><button type="button" onClick={draft.retry} className="min-h-11 px-3 py-2 font-bold underline cursor-pointer">저장 다시 시도</button></div></div>}
 
       {/* 메인 와이드 2단 영역 (왼쪽 8칸: 내 원고지 / 오른쪽 4칸: 선생님 첨삭) */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
@@ -703,7 +597,7 @@ export default function StudentStudio({
                 {lastSavedTime && !isReadOnly && viewingPageIdx === null && (
                   <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] text-xs font-bold text-[#166534]">
                     <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse"></span>
-                    기기에 임시 보관됨 ({lastSavedTime})
+                    기기에 저장됨 ({lastSavedTime})
                   </span>
                 )}
 
@@ -798,7 +692,7 @@ export default function StudentStudio({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setRestoredBannerMsg('')}
+                  onClick={draft.dismissNotice}
                   className="text-[#065F46] hover:text-[#047857] text-xs underline cursor-pointer shrink-0"
                 >
                   확인
@@ -896,6 +790,7 @@ export default function StudentStudio({
                   onChange={(e) => setPieceTitle(e.target.value)}
                   maxLength={50}
                   aria-label="작품 제목"
+                  disabled={isSubmitting}
                   placeholder="제목을 써주세요"
                   className="w-full bg-transparent border-0 border-b border-dashed border-[#94A3B8] px-2 pb-2 text-center text-xl sm:text-2xl font-bold font-editorial-serif text-[#1E293B] placeholder:text-[#94A3B8]/70 placeholder:font-normal focus:outline-none focus:border-[#1B4332]"
                 />
@@ -948,7 +843,7 @@ export default function StudentStudio({
                   ref={textareaRef}
                   value={editorText}
                   onChange={(e) => setEditorText(e.target.value)}
-                  disabled={isReadOnly}
+                  disabled={isReadOnly || isSubmitting}
                   placeholder="여기에 글을 시작해 주세요."
                   className="min-h-[330px] w-full bg-transparent border-0 p-0 focus:outline-none font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] resize-none leading-8 whitespace-pre-wrap disabled:opacity-75 disabled:cursor-not-allowed"
                 />
@@ -1198,6 +1093,14 @@ export default function StudentStudio({
       </div>
 
       {/* [처음 쓴 글 · 고쳐 쓴 글 크게 비교하기] 화면 꽉 차는 대형 모달 */}
+      {recoveryData && <DraftRecoveryDialog topicTitle={selectedTopic.title} currentDraft={{ pieceTitle, text: editorText }} items={recoveryData.items} legacy={recoveryData.legacy} canRestore={!isSubmitting && !isTeacherPreview && !isClassLocked && (!isTeacherLocked || isFinalCompleted)} onClose={() => setRecoveryData(null)} onRestore={(snapshot) => {
+        const allowCompleted = isFinalCompleted && !isClassLocked;
+        if (!draft.restore(snapshot, allowCompleted)) return false;
+        if (allowCompleted) setIsEditingCompleted(true);
+        setHighlightedQuote(''); setShowGreenText(false); setViewingPageIdx(null); setRecoveryData(null);
+        return true;
+      }} />}
+
       <GrowthDiffModal
         isOpen={isDiffModalOpen}
         onClose={() => setIsDiffModalOpen(false)}
