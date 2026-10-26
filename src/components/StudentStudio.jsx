@@ -474,6 +474,7 @@ export default function StudentStudio({
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
           {topics.map((tp, idx) => {
             const stData = getStudentDataForTopic(tp);
+            const isTopicFinal = isFinalWritingStatus(stData?.status);
             const meta = STAGE_META[stData?.status] || STAGE_META.STAGE_1_WRITING;
             const hasFeedback =
               Boolean(stData?.teacherNote) || (stData?.feedbackItems || []).length > 0;
@@ -483,7 +484,9 @@ export default function StudentStudio({
                 key={tp.id}
                 onClick={() => setOpenedTopicId(tp.id)}
                 className={`sketch-card sketch-card-hover p-6 flex flex-col justify-between cursor-pointer transition relative overflow-hidden ${
-                  tp.isActive
+                  isTopicFinal
+                    ? 'bg-[#F2F9F5] border-2 border-[#52B788]'
+                    : tp.isActive
                     ? 'bg-white border-2 border-[#1B4332]'
                     : 'bg-[#FBFBF9] border-[#CBD5E1]'
                 }`}
@@ -491,15 +494,20 @@ export default function StudentStudio({
                 {/* 왼쪽 공책 제본 띠 장식 */}
                 <div
                   className={`absolute left-0 top-0 bottom-0 w-2.5 ${
-                    tp.isActive ? 'bg-[#1B4332]' : 'bg-[#52B788]'
+                    isTopicFinal ? 'bg-[#52B788]' : tp.isActive ? 'bg-[#1B4332]' : 'bg-[#94A3B8]'
                   }`}
                 />
 
                 <div className="pl-3 space-y-3">
                   {/* 상단 배지 줄 */}
                   <div className="flex items-center justify-between gap-2 flex-wrap">
-                    <div className="flex items-center gap-1.5">
-                      {tp.isActive ? (
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      {isTopicFinal ? (
+                        <span className="px-2.5 py-0.5 rounded-full bg-[#D8F3DC] border border-[#2D6A4F] text-[#1B4332] text-xs font-bold flex items-center gap-1">
+                          <span>🎉</span>
+                          <span>최종 완성 (수고했어요!)</span>
+                        </span>
+                      ) : tp.isActive ? (
                         <span className="px-2.5 py-0.5 rounded-full bg-[#1B4332] text-white text-xs font-bold">
                           오늘의 글쓰기 주제
                         </span>
@@ -508,7 +516,7 @@ export default function StudentStudio({
                           지난 공책 · {tp.createdAt}
                         </span>
                       )}
-                      {hasFeedback && (
+                      {hasFeedback && !isTopicFinal && (
                         <span className="px-2.5 py-0.5 rounded-full bg-[#FEF3C7] border border-[#F59E0B] text-[#92400E] text-xs font-bold">
                           선생님 첨삭 도착!
                         </span>
@@ -539,7 +547,7 @@ export default function StudentStudio({
                     {tp.createdAt}
                   </span>
                   <span className="text-xs sm:text-sm font-bold text-[#1B4332] inline-flex items-center gap-1.5 group-hover:underline">
-                    <span>이 공책 펼치기</span>
+                    <span>{isTopicFinal ? '완성된 작품 감상하기' : '이 공책 펼치기'}</span>
                     <HandDrawnArrowRightIcon size={15} color="#1B4332" />
                   </span>
                 </div>
@@ -555,8 +563,8 @@ export default function StudentStudio({
   // 화면 3: 책장에서 선택한 주제의 『와이드 글쓰기 공책 화면』
   // ============================================================================
   const isLocked = Boolean(topicStudentData?.locked) || Boolean(selectedTopic?.classLocked);
-  const isReadOnly = isTeacherPreview || isLocked;
   const isFinalCompleted = isFinalWritingStatus(topicStudentData?.status);
+  const isReadOnly = isTeacherPreview || isLocked || isFinalCompleted;
   const hasRevision = draftPages.length >= 2;
   const activeDisplayText =
     viewingPageIdx !== null && draftPages[viewingPageIdx]
@@ -752,6 +760,37 @@ export default function StudentStudio({
               </div>
             )}
 
+            {isFinalCompleted && (
+              <div className="mb-3.5 p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-[#D8F3DC] via-[#E8F5E9] to-[#D8F3DC] border-2 border-[#52B788] shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5">
+                <div className="flex items-start sm:items-center gap-3.5">
+                  <div className="w-11 h-11 rounded-2xl bg-[#1B4332] text-white flex items-center justify-center shrink-0 shadow-sm text-2xl">
+                    🎉
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="px-2.5 py-0.5 rounded-full bg-[#1B4332] text-white text-xs font-bold">
+                        글쓰기 최종 완성
+                      </span>
+                      <h3 className="text-base sm:text-lg font-bold text-[#1B4332]">
+                        선생님이 글을 최종 확인했어요! 글 쓰느라 정말 수고 많았어요 👏
+                      </h3>
+                    </div>
+                    <p className="text-xs sm:text-sm text-[#2D6A4F] mt-1 leading-relaxed font-medium">
+                      처음 생각부터 고쳐 쓰기까지 정성을 다해 나만의 멋진 글을 완성했어요. 스스로를 많이 칭찬해 주세요!
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsDiffModalOpen(true)}
+                  className="sketch-btn-primary px-3.5 py-2 text-xs font-bold flex items-center gap-1.5 shrink-0 self-end sm:self-center"
+                >
+                  <HandDrawnDiffIcon size={15} color="#FFFFFF" />
+                  <span>처음 글과 비교하기</span>
+                </button>
+              </div>
+            )}
+
             <div className="text-xs sm:text-sm text-[#2D6A4F] mb-3 bg-[#F2F9F5] px-4 py-2.5 rounded-xl border border-[#B7E4C7] font-medium">
               안내: {selectedTopic.prompt}
             </div>
@@ -841,9 +880,12 @@ export default function StudentStudio({
                 <span>교사 미리보기에서는 학생 공책을 읽기만 할 수 있습니다</span>
               </div>
             ) : isFinalCompleted ? (
-              <div className="py-3.5 px-6 rounded-xl bg-[#D8F3DC] border border-[#1B4332] text-sm font-bold text-[#1B4332] flex items-center gap-2">
-                <HandDrawnCheckIcon size={18} color="#1B4332" />
-                <span>선생님이 최종 완성본으로 확인했어요.</span>
+              <div className="w-full sm:w-auto py-3.5 px-6 rounded-2xl bg-[#D8F3DC] border-2 border-[#1B4332] text-sm font-bold text-[#1B4332] flex items-center justify-center sm:justify-start gap-3 shadow-2xs">
+                <span className="text-2xl">🏅</span>
+                <div>
+                  <div className="text-xs text-[#2D6A4F] font-semibold">글쓰기 여정 완료</div>
+                  <div>선생님이 최종 완성본으로 확인했어요! 글 쓰느라 정말 수고 많았어요 👏</div>
+                </div>
               </div>
             ) : isLocked ? (
               <div className="py-3.5 px-6 rounded-xl bg-[#F2F9F5] border border-[#52B788] text-sm font-bold text-[#1B4332] flex items-center gap-2">
@@ -887,15 +929,39 @@ export default function StudentStudio({
               )}
             </div>
 
-            {!topicStudentData?.teacherNote && feedbackItems.length === 0 ? (
-              <div className="py-16 px-6 text-center rounded-2xl bg-white border border-[#E2E8F0] space-y-2">
-                <p className="text-base font-bold text-[#475569]">
-                  아직 도착한 첨삭이 없어요
-                </p>
-                <p className="text-sm text-[#64748B] leading-relaxed">
-                  왼쪽 공책에 글을 쓰고 [제출하기]를 누르면, 선생님이 내 글을 읽고 여기에 다정한 조언을 적어 주실 거예요!
-                </p>
+            {isFinalCompleted && (
+              <div className="p-4 rounded-2xl bg-[#D8F3DC] border-2 border-[#52B788] text-[#1B4332] flex items-center gap-3">
+                <span className="text-2xl shrink-0">🏆</span>
+                <div>
+                  <div className="text-xs font-bold text-[#2D6A4F]">최종 완료 도장 쾅!</div>
+                  <div className="text-sm font-bold">
+                    선생님이 최종 확인을 마쳤어요. 멋진 글을 짓느라 애썼어요!
+                  </div>
+                </div>
               </div>
+            )}
+
+            {!topicStudentData?.teacherNote && feedbackItems.length === 0 ? (
+              isFinalCompleted ? (
+                <div className="py-12 px-6 text-center rounded-2xl bg-white border border-[#CBD5E1] space-y-2">
+                  <p className="text-base font-bold text-[#1B4332]">
+                    훌륭하게 글쓰기를 마쳤어요!
+                  </p>
+                  <p className="text-sm text-[#475569] leading-relaxed">
+                    선생님이 최종 완성본으로 인정해 주셨어요.<br />
+                    내가 쓴 글을 다시 읽어보거나, 위의 [처음 글과 비교하기]를 눌러보세요.
+                  </p>
+                </div>
+              ) : (
+                <div className="py-16 px-6 text-center rounded-2xl bg-white border border-[#E2E8F0] space-y-2">
+                  <p className="text-base font-bold text-[#475569]">
+                    아직 도착한 첨삭이 없어요
+                  </p>
+                  <p className="text-sm text-[#64748B] leading-relaxed">
+                    왼쪽 공책에 글을 쓰고 [제출하기]를 누르면, 선생님이 내 글을 읽고 여기에 다정한 조언을 적어 주실 거예요!
+                  </p>
+                </div>
+              )
             ) : (
               <div className="space-y-4">
                 {topicStudentData?.teacherNote && (
