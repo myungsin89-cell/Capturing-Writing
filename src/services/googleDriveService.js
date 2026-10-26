@@ -659,13 +659,16 @@ function getStoredLatestDraftText(record = {}) {
  */
 export async function ensureAndSyncStudentGoogleDoc(
   accessToken,
-  { student, className, topicTitle, folderId }
+  { student, className, topicTitle, folderId, studentText, pieceTitle }
 ) {
   if (!accessToken || !student) return null;
 
   const targetFolderId = folderId || (await ensureRootFolder(accessToken));
-  const latestText = getStoredLatestDraftText(student);
-  const pieceTitle = student.pieceTitle || topicTitle || '제목 없음';
+  const latestText =
+    studentText !== undefined && studentText !== null
+      ? studentText
+      : getStoredLatestDraftText(student);
+  const cleanPieceTitle = pieceTitle || student.pieceTitle || topicTitle || '제목 없음';
 
   let docId = student.docId;
   let docUrl = student.docUrl;
@@ -673,7 +676,7 @@ export async function ensureAndSyncStudentGoogleDoc(
   // 데모 ID이거나 아직 실제 독스가 없으면 교사의 구글 드라이브에 자동 생성!
   if (!docId || String(docId).startsWith('DEMO_')) {
     const docTitle = `[${className || '쓰담'}] ${student.number}번 ${student.name} - ${
-      topicTitle || '글쓰기 공책'
+      cleanPieceTitle || topicTitle || '글쓰기 공책'
     }`;
 
     const createdFile = await googleFetch(
@@ -693,9 +696,9 @@ export async function ensureAndSyncStudentGoogleDoc(
     docUrl = `https://docs.google.com/document/d/${docId}/edit`;
   }
 
-  // 학생의 최신 글로 독스 본문을 깨끗하게 세팅 (이전 Brisk 표 제거 포함)
+  // 학생의 최신 글로 독스 본문을 깨끗하게 세팅 (이전 Brisk 표/댓글 초기화 및 최신 본문 100% 동기화)
   await resetGoogleDocWithStudentText(accessToken, docId, latestText, {
-    pieceTitle,
+    pieceTitle: cleanPieceTitle,
     authorName: student.name || ''
   });
 
@@ -704,6 +707,7 @@ export async function ensureAndSyncStudentGoogleDoc(
 
 /**
  * 구글 독스 안의 이전 Brisk 첨삭 표/문단/댓글을 지우고 작품 제목·이름·학생 본문만 남깁니다.
+ * Drive API media upload 방식을 우선 사용하여 이전 Brisk 테이블 경계 충돌로 인한 빈 문서 오류를 완벽히 방지합니다.
  */
 export async function resetGoogleDocWithStudentText(
   accessToken,
@@ -713,6 +717,75 @@ export async function resetGoogleDocWithStudentText(
 ) {
   if (!accessToken || !docId || String(docId).startsWith('DEMO_')) return;
 
+  const cleanTitle = String(pieceTitle || '').trim() || '제목 없음';
+  const cleanAuthor = String(authorName || '').trim();
+  const rawBody = String(studentText || '').replace(/\r\n/g, '\n').trim();
+
+  // 1순위: Google Drive API uploadType=media (HTML)로 이전 Brisk 표·서식·댓글을 깨끗이 날리고 새 글로 교체
+  try {
+    const paragraphsHtml = rawBody
+      ? rawBody
+          .split('\n')
+          .map((line) => {
+            const escaped = line
+              .replace(/&/g, '&amp;')
+              .replace(/</g, '&lt;')
+              .replace(/>/g, '&gt;');
+            return `<p style="font-size:12pt;line-height:1.8;margin:0 0 12px 0;">${escaped || '&nbsp;'}</p>`;
+          })
+          .join('')
+      : '<p style="font-size:12pt;color:#94a3b8;">(작성된 글 본문이 비어 있습니다)</p>';
+
+    const htmlContent = `<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="font-family:'Pretendard', sans-serif; color:#1E293B; padding:20px;">
+  <p style="font-size:1pt; color:#ffffff; margin:0;">${STUDENT_TEXT_MARKER}</p>
+  <h1 style="text-align:center; font-size:22pt; font-weight:bold; margin:0 0 16px 0;">${cleanTitle.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</h1>
+  <p style="text-align:right; font-size:13pt; font-weight:bold; color:#475569; margin:0 0 32px 0;">${cleanAuthor.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>
+  <div style="margin-top:20px;">
+    ${paragraphsHtml}
+  </div>
+</body>
+</html>`;
+
+    const res = await fetch(
+      `https://www.googleapis.com/upload/drive/v3/files/${docId}?uploadType=media`,
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'text/html;charset=utf-8'
+        },
+        body: htmlContent
+      }
+    );
+
+    if (res.ok) {
+      // 이전 차수 구글 독스 댓글 정리
+      try {
+        const commentsRes = await googleFetch(
+          `https://www.googleapis.com/drive/v3/files/${docId}/comments?fields=comments(id,deleted)`,
+          accessToken
+        );
+        const comments = commentsRes?.comments || [];
+        for (const c of comments) {
+          if (!c.deleted) {
+            googleFetch(
+              `https://www.googleapis.com/drive/v3/files/${docId}/comments/${c.id}`,
+              accessToken,
+              { method: 'DELETE' }
+            ).catch(() => {});
+          }
+        }
+      } catch (e) {}
+      return;
+    }
+  } catch (err) {
+    console.warn('Drive media 업로드 실패, Docs batchUpdate 방식으로 폴백합니다:', err);
+  }
+
+  // 2순위 폴백: Google Docs batchUpdate 방식
   try {
     const doc = await googleFetch(
       `https://docs.googleapis.com/v1/documents/${docId}`,
@@ -731,59 +804,16 @@ export async function resetGoogleDocWithStudentText(
       });
     }
 
-    const cleanTitle = String(pieceTitle || '').trim() || '제목 없음';
-    const cleanAuthor = String(authorName || '').trim();
     const markerLine = `${STUDENT_TEXT_MARKER}\n`;
     const titleLine = `${cleanTitle}\n`;
-    const authorLine = `${cleanAuthor}\n`;
-    const cleanBody = `${markerLine}${titleLine}${authorLine}\n${String(studentText || '').replace(/\r\n/g, '\n')}\n`;
+    const authorLine = `${cleanAuthor ? cleanAuthor + '\n' : ''}`;
+    const cleanBody = `${markerLine}${titleLine}${authorLine}\n${rawBody}\n`;
     requests.push({
       insertText: {
         location: { index: 1 },
         text: cleanBody
       }
     });
-
-    const markerStart = 1;
-    const markerEnd = markerStart + STUDENT_TEXT_MARKER.length;
-    const titleStart = markerStart + markerLine.length;
-    const titleEnd = titleStart + cleanTitle.length;
-    const authorStart = titleStart + titleLine.length;
-    const authorEnd = authorStart + cleanAuthor.length;
-
-    requests.push({
-      updateTextStyle: {
-        range: { startIndex: markerStart, endIndex: markerEnd },
-        textStyle: {
-          fontSize: { magnitude: 1, unit: 'PT' },
-          foregroundColor: { color: { rgbColor: { red: 1, green: 1, blue: 1 } } }
-        },
-        fields: 'fontSize,foregroundColor'
-      }
-    });
-    requests.push({
-      updateTextStyle: {
-        range: { startIndex: titleStart, endIndex: titleEnd },
-        textStyle: { bold: true, fontSize: { magnitude: 16, unit: 'PT' } },
-        fields: 'bold,fontSize'
-      }
-    });
-    requests.push({
-      updateParagraphStyle: {
-        range: { startIndex: titleStart, endIndex: titleEnd + 1 },
-        paragraphStyle: { alignment: 'CENTER' },
-        fields: 'alignment'
-      }
-    });
-    if (cleanAuthor) {
-      requests.push({
-        updateParagraphStyle: {
-          range: { startIndex: authorStart, endIndex: authorEnd + 1 },
-          paragraphStyle: { alignment: 'END' },
-          fields: 'alignment'
-        }
-      });
-    }
 
     await googleFetch(
       `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`,
@@ -793,28 +823,8 @@ export async function resetGoogleDocWithStudentText(
         body: JSON.stringify({ requests })
       }
     );
-
-    // 이전 차수 댓글 정리
-    const commentsRes = await googleFetch(
-      `https://www.googleapis.com/drive/v3/files/${docId}/comments?fields=comments(id,deleted)`,
-      accessToken
-    );
-    const comments = commentsRes?.comments || [];
-    for (const c of comments) {
-      if (!c.deleted) {
-        try {
-          await googleFetch(
-            `https://www.googleapis.com/drive/v3/files/${docId}/comments/${c.id}`,
-            accessToken,
-            { method: 'DELETE' }
-          );
-        } catch {
-          // ignore
-        }
-      }
-    }
   } catch (e) {
-    console.warn('구글 독스 본문 동기화 참고:', e);
+    console.warn('Google Doc 본문 리셋 참고:', e);
   }
 }
 

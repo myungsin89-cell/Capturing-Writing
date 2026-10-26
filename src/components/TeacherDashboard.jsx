@@ -308,7 +308,9 @@ export default function TeacherDashboard({
 
     if (onEnsureStudentDoc) {
       showToast(`${st.name} 학생 구글 독스에 최신 본문을 동기화하고 있습니다...`);
-      const ensured = await onEnsureStudentDoc(st, currentTopic);
+      const textToSync = currentStudentText || '';
+      const titleToSync = st.pieceTitle || currentTopic?.title || '글쓰기 공책';
+      const ensured = await onEnsureStudentDoc(st, currentTopic, textToSync, titleToSync);
       if (ensured && ensured.docId) {
         targetDocId = ensured.docId;
         targetDocUrl = ensured.docUrl;

@@ -1445,14 +1445,16 @@ export default function App() {
 
   // 교사가 [1. 학생 독스 열기] 클릭 시: 아직 실제 구글 독스가 없으면 내 구글 드라이브에 자동 생성 후 최신 본문 동기화!
   const handleEnsureStudentDoc = useCallback(
-    async (student, topic) => {
+    async (student, topic, explicitText, explicitTitle) => {
       if (!googleAuth?.accessToken || !student) return null;
       try {
         const res = await ensureAndSyncStudentGoogleDoc(googleAuth.accessToken, {
           student,
           className: config.className,
-          topicTitle: topic?.title || config.assignmentTitle,
-          folderId: config.driveFolderId
+          topicTitle: explicitTitle || topic?.title || config.assignmentTitle,
+          folderId: config.driveFolderId,
+          studentText: explicitText,
+          pieceTitle: explicitTitle
         });
         if (res && res.docId) {
           const targetTopicId = topic?.id || config.activeTopicId || '';
