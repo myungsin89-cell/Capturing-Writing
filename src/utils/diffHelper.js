@@ -214,14 +214,15 @@ export function getStudentDraftPages(student) {
 }
 
 export function isFinalWritingStatus(status) {
-  return status === 'FINAL_COMPLETED' || status === 'STAGE_3_COMPLETED';
+  return status === 'FINAL_COMPLETED';
 }
 
 export function isSubmittedWritingStatus(status) {
   return (
     status === 'REVISION_SUBMITTED' ||
     status === 'STAGE_1_SUBMITTED' ||
-    status === 'STAGE_2_SUBMITTED'
+    status === 'STAGE_2_SUBMITTED' ||
+    status === 'STAGE_3_COMPLETED'
   );
 }
 
@@ -267,12 +268,12 @@ export const STAGE_META = {
     badgeText: 'text-[#075985]'
   },
   STAGE_3_COMPLETED: {
-    label: '최종 완성본',
-    shortLabel: '최종 완성',
-    step: 3,
-    badgeBg: 'bg-[#D8F3DC]',
-    badgeBorder: 'border-[#1B4332]',
-    badgeText: 'text-[#1B4332]'
+    label: '3차 수정본 제출완료 · 확인 대기중',
+    shortLabel: '3차 수정본 확인 대기',
+    step: 2,
+    badgeBg: 'bg-[#E0F2FE]',
+    badgeBorder: 'border-[#38BDF8]',
+    badgeText: 'text-[#075985]'
   },
   FINAL_COMPLETED: {
     label: '최종 완성본',
