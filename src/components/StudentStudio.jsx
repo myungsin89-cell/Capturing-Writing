@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   HandDrawnNotebookLogo,
   HandDrawnPencilIcon,
@@ -25,7 +25,8 @@ import {
   CornerDownLeft,
   ArrowLeft,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Sparkles
 } from 'lucide-react';
 
 export default function StudentStudio({
@@ -62,8 +63,19 @@ export default function StudentStudio({
   const [toastMsg, setToastMsg] = useState('');
   const [showGreenText, setShowGreenText] = useState(false);
   const [viewingPageIdx, setViewingPageIdx] = useState(null); // null이면 현재 작성·수정 공책, 숫자면 해당 차수 글 보기
+  const [lastSavedTime, setLastSavedTime] = useState(''); // 기기 로컬 자동 보관 시각
+  const [restoredBannerMsg, setRestoredBannerMsg] = useState(''); // 이전 작성글 자동 복원 안내
   const textareaRef = useRef(null);
   const questionSubmittingRef = useRef(false);
+
+  // 구글 시트 요청 없이 기기 브라우저(localStorage)에만 안전하게 보관하는 키
+  const getDraftStorageKey = useCallback(
+    (topicId) => {
+      if (!currentStudent?.number) return null;
+      return `sseudam_local_draft_${String(currentStudent.number).trim()}_${topicId || 'default'}`;
+    },
+    [currentStudent?.number]
+  );
 
   const currentStudent =
     students.find((s) => String(s.number) === String(activeStudent?.number)) ||
@@ -112,22 +124,138 @@ export default function StudentStudio({
 
   const currentWritingStage = Math.max(1, draftPages.length + 1);
 
+  // 공책 열 때: 제출본을 불러오되, 기기 로컬에 작성 중이던 미제출 글이 있다면 안전하게 복원
   useEffect(() => {
     if (!topicStudentData) return;
     setHighlightedQuote('');
     setShowGreenText(false);
     setViewingPageIdx(null);
+    setRestoredBannerMsg('');
+
     const pages = getStudentDraftPages(topicStudentData);
-    const latest = pages.length > 0 ? pages[pages.length - 1].text : '';
-    setPieceTitle(topicStudentData.pieceTitle || '');
-    setEditorText(
-      latest ||
-        topicStudentData.draft3 ||
-        topicStudentData.draft2 ||
-        topicStudentData.draft1 ||
-        ''
-    );
-  }, [currentStudent?.number, openedTopicId, topicStudentData?.status, topicStudentData?.pieceTitle]);
+    const submittedLatest = pages.length > 0 ? pages[pages.length - 1].text : '';
+    const submittedTitle = topicStudentData.pieceTitle || '';
+
+    let initialText =
+      submittedLatest ||
+      topicStudentData.draft3 ||
+      topicStudentData.draft2 ||
+      topicStudentData.draft1 ||
+      '';
+    let initialTitle = submittedTitle;
+
+    // 교사 미리보기가 아닐 때, 기기 로컬에 저장되어 있던 작성 중인 글이 있는지 확인
+    if (!isTeacherPreview && openedTopicId) {
+      const storageKey = getDraftStorageKey(openedTopicId);
+      if (storageKey) {
+        try {
+          const raw = localStorage.getItem(storageKey);
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            const hasUnsubmittedChanges =
+              (parsed.text !== undefined && parsed.text !== submittedLatest) ||
+              (parsed.pieceTitle !== undefined && parsed.pieceTitle !== submittedTitle);
+
+            if (hasUnsubmittedChanges && (parsed.text?.trim() || parsed.pieceTitle?.trim())) {
+              initialText = parsed.text ?? initialText;
+              initialTitle = parsed.pieceTitle ?? initialTitle;
+              setLastSavedTime(parsed.savedAtStr || '방금');
+              setRestoredBannerMsg(
+                `실수로 창이 닫혔거나 나갔던 글(${parsed.savedAtStr || '방금'})을 안전하게 복원했어요!`
+              );
+            }
+          }
+        } catch (e) {
+          console.warn('임시 글 복원 참고:', e);
+        }
+      }
+    }
+
+    setPieceTitle(initialTitle);
+    setEditorText(initialText);
+  }, [
+    currentStudent?.number,
+    openedTopicId,
+    topicStudentData?.status,
+    topicStudentData?.pieceTitle,
+    isTeacherPreview,
+    getDraftStorageKey
+  ]);
+
+  // 글 작성 중일 때: 구글 시트 요청 없이 기기(브라우저 localStorage)에 실시간 자동 보관 (600ms 디바운스)
+  useEffect(() => {
+    if (isTeacherPreview || !openedTopicId || !currentStudent?.number) return;
+    const storageKey = getDraftStorageKey(openedTopicId);
+    if (!storageKey) return;
+
+    const pages = getStudentDraftPages(topicStudentData);
+    const submittedLatest = pages.length > 0 ? pages[pages.length - 1].text : '';
+    const submittedTitle = topicStudentData?.pieceTitle || '';
+
+    const hasChanges =
+      editorText !== submittedLatest || pieceTitle !== submittedTitle;
+
+    const timer = setTimeout(() => {
+      try {
+        if (hasChanges && (editorText.trim() || pieceTitle.trim())) {
+          const nowStr = new Date().toLocaleTimeString('ko-KR', {
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+          localStorage.setItem(
+            storageKey,
+            JSON.stringify({
+              pieceTitle,
+              text: editorText,
+              savedAt: Date.now(),
+              savedAtStr: nowStr
+            })
+          );
+          setLastSavedTime(nowStr);
+        } else if (!hasChanges) {
+          localStorage.removeItem(storageKey);
+          setLastSavedTime('');
+        }
+      } catch (e) {
+        console.warn('로컬 임시 저장 참고:', e);
+      }
+    }, 600);
+
+    return () => clearTimeout(timer);
+  }, [
+    editorText,
+    pieceTitle,
+    openedTopicId,
+    currentStudent?.number,
+    isTeacherPreview,
+    topicStudentData,
+    getDraftStorageKey
+  ]);
+
+  // 실수로 창 닫기나 뒤로가기 시 이탈 방지 브라우저 경고 (제출하지 않은 글 보호)
+  useEffect(() => {
+    if (isTeacherPreview || !openedTopicId) return;
+    const pages = getStudentDraftPages(topicStudentData);
+    const submittedLatest = pages.length > 0 ? pages[pages.length - 1].text : '';
+    const submittedTitle = topicStudentData?.pieceTitle || '';
+
+    const hasUnsubmittedChanges =
+      (editorText.trim() !== submittedLatest.trim() ||
+        pieceTitle.trim() !== submittedTitle.trim()) &&
+      (editorText.trim() || pieceTitle.trim());
+
+    if (!hasUnsubmittedChanges) return;
+
+    const handleBeforeUnload = (e) => {
+      e.preventDefault();
+      e.returnValue = '';
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [editorText, pieceTitle, openedTopicId, topicStudentData, isTeacherPreview]);
 
   const showToast = (msg) => {
     setToastMsg(msg);
@@ -188,11 +316,17 @@ export default function StudentStudio({
         selectedTopic.id,
         pieceTitle.trim()
       );
-      showToast(
-        result?.ok
-          ? '선생님께 내 글을 제출했어요!'
-          : result?.error || '제출하지 못했습니다. 다시 시도해 주세요.'
-      );
+      if (result?.ok) {
+        const storageKey = getDraftStorageKey(selectedTopic?.id);
+        if (storageKey) {
+          localStorage.removeItem(storageKey);
+        }
+        setLastSavedTime('');
+        setRestoredBannerMsg('');
+        showToast('선생님께 내 글을 제출했어요!');
+      } else {
+        showToast(result?.error || '제출하지 못했습니다. 다시 시도해 주세요.');
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -512,6 +646,13 @@ export default function StudentStudio({
                   {paragraphCount}개 문단 · {activeDisplayText.trim().length}자
                 </span>
 
+                {lastSavedTime && !isReadOnly && viewingPageIdx === null && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] text-xs font-bold text-[#166534]">
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse"></span>
+                    기기에 임시 보관됨 ({lastSavedTime})
+                  </span>
+                )}
+
                 {prevComparisonText && prevComparisonText.trim() !== activeDisplayText.trim() && (
                   <button
                     type="button"
@@ -594,6 +735,22 @@ export default function StudentStudio({
                 )}
               </div>
             </div>
+
+            {restoredBannerMsg && (
+              <div className="mb-3 px-4 py-2.5 rounded-xl bg-[#ECFDF5] border border-[#6EE7B7] text-xs font-bold text-[#065F46] flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-[#059669] shrink-0" />
+                  <span>{restoredBannerMsg}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setRestoredBannerMsg('')}
+                  className="text-[#065F46] hover:text-[#047857] text-xs underline cursor-pointer shrink-0"
+                >
+                  확인
+                </button>
+              </div>
+            )}
 
             <div className="text-xs sm:text-sm text-[#2D6A4F] mb-3 bg-[#F2F9F5] px-4 py-2.5 rounded-xl border border-[#B7E4C7] font-medium">
               안내: {selectedTopic.prompt}
