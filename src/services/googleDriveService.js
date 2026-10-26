@@ -11,6 +11,13 @@
 
 import gasCodeRaw from '../../gas/Code.gs?raw';
 import gasManifestRaw from '../../gas/appsscript.json?raw';
+import { prepareFeedbackBatch } from './batchFeedbackDrive';
+import { applyFeedbackToStudent, getFeedbackTopicRecord, hasFeedbackContent, wasBatchFeedbackDelivered } from '../utils/batchFeedback';
+
+export function prepareFeedbackBatchInDrive(accessToken, batch, onProgress) {
+  if (!accessToken) throw new Error('구글 로그인 후 묶음 피드백을 준비해 주세요.');
+  return prepareFeedbackBatch((url, options) => googleFetch(url, accessToken, options), batch, onProgress);
+}
 
 export const DEFAULT_GOOGLE_CLIENT_ID =
   '1095632072504-ijtmagk1fblel9i8d5oglj0e4d846f3q.apps.googleusercontent.com';
@@ -480,22 +487,64 @@ function mergeQuestions(localQuestions = [], remoteQuestions = []) {
  * 구글 시트에 전체 학급/주제/학생/질문 데이터를 깔끔하게 저장합니다.
  * (교사가 시트를 직접 열었을 때도 보기 쉽도록 Students 시트와 AppState 시트를 함께 업데이트합니다)
  */
-export async function saveFullStateToSpreadsheet(
+const spreadsheetSaveQueues = new Map();
+
+export function saveFullStateToSpreadsheet(accessToken, spreadsheetId, state) {
+  // Serialize this browser's teacher writes so a delayed autosave cannot overtake
+  // a reviewed-feedback send. Newer remote student records are merged below.
+  const previous = spreadsheetSaveQueues.get(spreadsheetId) || Promise.resolve();
+  const pending = previous.catch(() => {}).then(() => writeFullStateToSpreadsheet(accessToken, spreadsheetId, state));
+  spreadsheetSaveQueues.set(spreadsheetId, pending);
+  const cleanup = () => {
+    if (spreadsheetSaveQueues.get(spreadsheetId) === pending) spreadsheetSaveQueues.delete(spreadsheetId);
+  };
+  pending.then(cleanup, cleanup);
+  return pending;
+}
+
+async function writeFullStateToSpreadsheet(
   accessToken,
   spreadsheetId,
-  { classes, topics, students, questions, config, replaceRemoteRecords = false }
+  { classes, topics, students, questions, config, replaceRemoteRecords = false, reviewedFeedback }
 ) {
   if (!accessToken || !spreadsheetId) return;
   await ensureStudentSheetPermission(accessToken, spreadsheetId);
 
   let safeStudents = students || [];
   let safeQuestions = dedupeStoredQuestions(questions || []);
+  let feedbackStudent = null;
   if (!replaceRemoteRecords) {
     try {
       const remote = await loadFullStateFromSpreadsheet(accessToken, spreadsheetId);
       safeStudents = mergeNewerRemoteRecords(safeStudents, remote.students || []);
       safeQuestions = mergeQuestions(safeQuestions, remote.questions || []);
+      if (reviewedFeedback) {
+        const { classId, topicId, entry } = reviewedFeedback;
+        if (!entry.reviewed || !hasFeedbackContent(entry)) throw new Error('피드백 내용을 읽고 확인한 후 전송해 주세요.');
+        const legacyClassId = remote.classes?.[0]?.id || remote.config?.activeClassId || '';
+        const target = (remote.students || []).find((student) =>
+          String(student.classId || legacyClassId) === String(classId) && String(student.number) === String(entry.number));
+        const topic = (remote.topics || []).find((item) => String(item.id) === String(topicId) && String(item.classId || legacyClassId) === String(classId));
+        const activeTopic = (remote.topics || []).find((item) => String(item.classId || legacyClassId) === String(classId) && item.isActive);
+        const activeTopicId = activeTopic?.id || remote.config?.activeTopicId;
+        if (topic && target && wasBatchFeedbackDelivered(getFeedbackTopicRecord(target, topic, activeTopicId), entry)) {
+          return { feedbackStudent: { ...target, classId: target.classId || legacyClassId } };
+        }
+        feedbackStudent = topic && target && applyFeedbackToStudent(
+          { ...target, classId: target.classId || legacyClassId },
+          { topicId, activeTopicId, entry, nowIso: new Date().toISOString() }
+        );
+        if (!feedbackStudent) {
+          const error = new Error('학생의 제출 상태가 바뀌었습니다. 최신 제출본을 확인하고 다시 준비해 주세요.');
+          error.student = target ? { ...target, classId: target.classId || legacyClassId } : null;
+          throw error;
+        }
+        safeStudents = safeStudents.map((student) =>
+          String(student.classId || legacyClassId) === String(classId) && String(student.number) === String(entry.number)
+            ? feedbackStudent : student);
+      }
     } catch (e) {
+      if (reviewedFeedback) throw e;
       console.warn('저장 전 원격 변경 병합 참고:', e);
     }
   }
@@ -551,48 +600,70 @@ export async function saveFullStateToSpreadsheet(
     ]);
   });
 
-  await googleFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
-    accessToken,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        valueInputOption: 'RAW',
-        data: [
-          { range: 'AppState!A1', values: stateValues },
-          { range: 'Students!A1', values: studentRows },
-          { range: 'Questions!A1', values: questionRows }
-        ]
-      })
+  try {
+    await googleFetch(
+      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
+      accessToken,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          valueInputOption: 'RAW',
+          data: [
+            { range: 'AppState!A1', values: stateValues },
+            { range: 'Students!A1', values: studentRows },
+            { range: 'Questions!A1', values: questionRows }
+          ]
+        })
+      }
+    );
+  } catch (error) {
+    // A lost HTTP response can follow a successful write. Read the receipt before
+    // reporting failure so a retry never sends a second feedback round.
+    if (reviewedFeedback) {
+      const readback = await loadFullStateFromSpreadsheet(accessToken, spreadsheetId);
+      const { classId, topicId, entry } = reviewedFeedback;
+      const legacyClassId = readback.classes?.[0]?.id || readback.config?.activeClassId || '';
+      const saved = readback.students?.find((student) => String(student.classId || legacyClassId) === String(classId) && String(student.number) === String(entry.number));
+      const activeTopicId = readback.topics?.find((topic) => topic.isActive && String(topic.classId || legacyClassId) === String(classId))?.id || readback.config?.activeTopicId;
+      if (saved && wasBatchFeedbackDelivered(getFeedbackTopicRecord(saved, { id: topicId }, activeTopicId), entry)) {
+        return { feedbackStudent: { ...saved, classId: saved.classId || legacyClassId } };
+      }
     }
-  );
-
-  const firstUnusedRow = stateValues.length + 1;
-  if (firstUnusedRow <= 100) {
-    await googleFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/AppState!A${firstUnusedRow}:B100:clear`,
-      accessToken,
-      { method: 'POST', body: JSON.stringify({}) }
-    );
+    throw error;
   }
 
-  const firstUnusedStudentRow = studentRows.length + 1;
-  if (firstUnusedStudentRow <= 200) {
-    await googleFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Students!A${firstUnusedStudentRow}:O200:clear`,
-      accessToken,
-      { method: 'POST', body: JSON.stringify({}) }
-    );
-  }
+  try {
+    const firstUnusedRow = stateValues.length + 1;
+    if (firstUnusedRow <= 100) {
+      await googleFetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/AppState!A${firstUnusedRow}:B100:clear`,
+        accessToken,
+        { method: 'POST', body: JSON.stringify({}) }
+      );
+    }
 
-  const firstUnusedQuestionRow = questionRows.length + 1;
-  if (firstUnusedQuestionRow <= 300) {
-    await googleFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Questions!A${firstUnusedQuestionRow}:L300:clear`,
-      accessToken,
-      { method: 'POST', body: JSON.stringify({}) }
-    );
+    const firstUnusedStudentRow = studentRows.length + 1;
+    if (firstUnusedStudentRow <= 200) {
+      await googleFetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Students!A${firstUnusedStudentRow}:O200:clear`,
+        accessToken,
+        { method: 'POST', body: JSON.stringify({}) }
+      );
+    }
+
+    const firstUnusedQuestionRow = questionRows.length + 1;
+    if (firstUnusedQuestionRow <= 300) {
+      await googleFetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Questions!A${firstUnusedQuestionRow}:L300:clear`,
+        accessToken,
+        { method: 'POST', body: JSON.stringify({}) }
+      );
+    }
+  } catch (error) {
+    if (!reviewedFeedback) throw error;
+    console.warn('피드백 저장 후 빈 행 정리 참고:', error);
   }
+  return { feedbackStudent };
 }
 
 function getStoredDraftHistory(record = {}) {
@@ -1004,7 +1075,7 @@ export function translateBriskTextToKorean(rawText = '') {
 /**
  * 구글 독스에서 Brisk Teaching으로 삽입된 표(Table)/첨삭 문단과 댓글(Comment)을 자동으로 읽어옵니다.
  */
-export async function pullBriskFeedbackFromGoogleDoc(accessToken, docId, studentCurrentText = '') {
+export async function pullBriskFeedbackFromGoogleDoc(accessToken, docId, studentCurrentText = '', { strictComments = false } = {}) {
   if (!accessToken || !docId || String(docId).startsWith('DEMO_')) {
     return null;
   }
@@ -1120,6 +1191,7 @@ export async function pullBriskFeedbackFromGoogleDoc(accessToken, docId, student
         comment: translateBriskTextToKorean(c.content)
       }));
   } catch (e) {
+    if (strictComments) throw e;
     console.warn('구글 독스 댓글 읽기 참고:', e);
   }
 

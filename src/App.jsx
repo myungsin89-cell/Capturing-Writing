@@ -23,6 +23,7 @@ import {
   removeLegacyDemoState
 } from './utils/legacyDemoMigration';
 import { shouldAutoSaveTeacherState } from './utils/syncPolicy';
+import { getFeedbackTopicRecord, isMatchingSubmission, normalizeFeedbackCriteria, wasBatchFeedbackDelivered } from './utils/batchFeedback';
 
 const STORAGE_KEYS = {
   GAS_URL: 'sseudam_gas_url_v5',
@@ -320,6 +321,8 @@ export default function App() {
   const visibleStudents = students.filter(belongsToActiveClass);
   const visibleTopics = topics.filter(belongsToActiveClass);
   const visibleQuestions = questions.filter(belongsToActiveClass);
+  const feedbackStateRef = useRef(null);
+  feedbackStateRef.current = { classes, topics, students, questions, config, googleAuth };
 
   useEffect(() => {
     if (isStudentUrlMode) return;
@@ -1328,6 +1331,48 @@ export default function App() {
     return { ok: true };
   };
 
+  const handleSaveFeedbackCriteria = async (topicId, criteria) => {
+    const current = feedbackStateRef.current;
+    const nextTopics = current.topics.map((topic) => String(topic.id) === String(topicId)
+      ? { ...topic, feedbackCriteria: normalizeFeedbackCriteria(criteria) } : topic);
+    try {
+      if (current.googleAuth?.accessToken && current.config.spreadsheetId) {
+        await saveFullStateToSpreadsheet(current.googleAuth.accessToken, current.config.spreadsheetId, {
+          ...current, topics: nextTopics
+        });
+      }
+      setTopics((previous) => previous.map((topic) => String(topic.id) === String(topicId)
+        ? { ...topic, feedbackCriteria: normalizeFeedbackCriteria(criteria) } : topic));
+      return { ok: true };
+    } catch (error) { return { ok: false, error: error.message }; }
+  };
+
+  const handleSendBatchFeedback = async ({ topicId, classId, entry }) => {
+    const current = feedbackStateRef.current;
+    if (!current.googleAuth?.accessToken || !current.config.spreadsheetId) {
+      return { ok: false, error: '구글 로그인 상태를 확인한 뒤 다시 전송해 주세요.' };
+    }
+    const source = current.students.find((student) =>
+      String(student.classId || legacyClassId) === String(classId) && String(student.number) === String(entry.number));
+    const record = getFeedbackTopicRecord(source && { ...source, classId: source.classId || legacyClassId }, { id: topicId }, current.config.activeTopicId);
+    if (!isMatchingSubmission(record, entry) && !wasBatchFeedbackDelivered(record, entry)) {
+      return { ok: false, error: '학생의 제출 상태가 바뀌었습니다. 최신 제출본으로 준비해 주세요.' };
+    }
+    try {
+      const result = await saveFullStateToSpreadsheet(current.googleAuth.accessToken, current.config.spreadsheetId, {
+        ...current, reviewedFeedback: { topicId, classId, entry }
+      });
+      if (!result?.feedbackStudent) throw new Error('피드백 저장을 확인하지 못했습니다.');
+      setStudents((previous) => mergeLatestByKey(previous, [result.feedbackStudent],
+        (student) => `${student.classId || legacyClassId}::${student.number}`));
+      return { ok: true };
+    } catch (error) {
+      if (error.student) setStudents((previous) => mergeLatestByKey(previous, [error.student],
+        (student) => `${student.classId || legacyClassId}::${student.number}`));
+      return { ok: false, error: error.message };
+    }
+  };
+
   // 교사: 학급 삭제 (목록만 삭제 vs 관련 시트 데이터 및 구글 독스 파일까지 모두 삭제)
   const handleDeleteClass = async (classId, { deleteDriveFiles = false } = {}) => {
     if (!classId) return { deletedCount: 0 };
@@ -1800,6 +1845,8 @@ export default function App() {
             onChangeSelectedStudentNumber={setTeacherSelectedStudentNumber}
             onCreateNewTopic={handleCreateNewTopic}
             onUpdateTopic={handleUpdateTopic}
+            onSaveFeedbackCriteria={handleSaveFeedbackCriteria}
+            onSendBatchFeedback={handleSendBatchFeedback}
             onDeleteTopic={handleDeleteTopic}
             onManageStudents={handleManageStudents}
             students={visibleStudents}

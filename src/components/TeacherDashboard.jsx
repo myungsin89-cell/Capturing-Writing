@@ -12,6 +12,8 @@ import {
 } from './HandDrawnIcons';
 import { GrowthDiffModal } from './GrowthDiffView';
 import StudentShareModal from './StudentShareModal';
+import BatchFeedbackPanel from './BatchFeedbackPanel';
+import { buildFeedbackPrompt } from '../utils/batchFeedback';
 import {
   STAGE_META,
   renderTextWithHighlight,
@@ -65,6 +67,8 @@ export default function TeacherDashboard({
   onChangeSelectedStudentNumber,
   onCreateNewTopic,
   onUpdateTopic,
+  onSaveFeedbackCriteria,
+  onSendBatchFeedback,
   onDeleteTopic,
   onManageStudents,
   students,
@@ -344,7 +348,7 @@ export default function TeacherDashboard({
     }
 
     try {
-      await navigator.clipboard.writeText(DEFAULT_BRISK_PROMPT);
+      await navigator.clipboard.writeText(currentTopic ? buildFeedbackPrompt(currentTopic, currentTopic.feedbackCriteria) : DEFAULT_BRISK_PROMPT);
     } catch (e) {}
 
     let targetDocId = st.docId;
@@ -1804,6 +1808,17 @@ export default function TeacherDashboard({
           </button>
         </div>
       </div>
+
+      <BatchFeedbackPanel
+        key={`${googleAuth?.user?.email || config.spreadsheetId || 'local'}:${config.activeClassId}:${currentTopic.id}`}
+        topic={currentTopic}
+        topics={allTopics}
+        students={students}
+        config={config}
+        googleAuth={googleAuth}
+        onSaveCriteria={onSaveFeedbackCriteria}
+        onSendFeedback={onSendBatchFeedback}
+      />
 
       {/* 2. 3단 와이드 데스크톱 워크스페이스 (좌측 명단 3 : 가운데 학생 글 5 : 우측 첨삭 패널 4) */}
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
