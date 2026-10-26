@@ -412,6 +412,8 @@ function appendDraftRevisionV2_(record, text, pieceTitle, updatedAt, updatedAtIs
     status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
     locked: true,
     pieceTitle: pieceTitle,
+    teacherNote: '',
+    feedbackItems: [],
     draftHistory: history.concat([{
       round: round,
       label: String(round) + '차 글',

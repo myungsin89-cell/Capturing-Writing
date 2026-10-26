@@ -629,6 +629,8 @@ function appendStoredDraftRevision(record = {}, text, pieceTitle, updatedAt, upd
     status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
     locked: true,
     pieceTitle,
+    teacherNote: '',
+    feedbackItems: [],
     draftHistory: [
       ...history,
       {

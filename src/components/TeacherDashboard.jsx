@@ -35,6 +35,10 @@ import {
   RefreshCw,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  History,
+  Copy,
   Pencil,
   Users,
   QrCode,
@@ -166,6 +170,7 @@ export default function TeacherDashboard({
   const [toastMsg, setToastMsg] = useState('');
   const [isPullingDoc, setIsPullingDoc] = useState(false);
   const [waitingDocReturn, setWaitingDocReturn] = useState(false);
+  const [showPreviousFeedback, setShowPreviousFeedback] = useState(false);
   const docOpenedTimeRef = useRef(0);
 
   const currentTopic = topics.find((t) => t.id === openedTopicId) || null;
@@ -201,6 +206,24 @@ export default function TeacherDashboard({
   const canFinalizeSelectedStudent =
     draftPages.length > 0 && isSubmittedWritingStatus(selectedStudent?.status);
 
+  // 이전 차수 학생에게 해주었던 첨삭 기록 모음 (2차 이상 글일 때 참고용)
+  const previousFeedbackPages = draftPages
+    .slice(0, draftPages.length - 1)
+    .filter(
+      (pg) =>
+        Boolean(pg.teacherNote && pg.teacherNote.trim()) ||
+        Boolean(pg.feedbackItems && pg.feedbackItems.length > 0)
+    );
+  const legacyPreviousNote =
+    previousFeedbackPages.length === 0 &&
+    draftPages.length >= 2 &&
+    selectedStudent?.teacherNote &&
+    selectedStudent.status === 'REVISION_SUBMITTED'
+      ? selectedStudent.teacherNote
+      : '';
+  const hasPreviousFeedback =
+    previousFeedbackPages.length > 0 || Boolean(legacyPreviousNote);
+
   useEffect(() => {
     if (!selectedStudent || !currentTopic) return;
     const pages = getStudentDraftPages(selectedStudent);
@@ -210,10 +233,20 @@ export default function TeacherDashboard({
     setWaitingDocReturn(false);
     setShowResolvedQuestions(false);
     setEditingReplyId(null);
+    setShowPreviousFeedback(false);
     setActivePageIdx(Math.max(0, pages.length - 1));
-    setFeedbackNote(selectedStudent.teacherNote || '');
-    setModalFeedbackItems(selectedStudent.feedbackItems || []);
-  }, [selectedStudent?.number, currentTopic?.id, draftPages.length]);
+
+    // 2차(또는 N차) 수정본 제출 상태(REVISION_SUBMITTED)일 때는 기존 1차 첨삭 내용을 비우고 '새판'으로 시작!
+    const isRevisionSubmitted = selectedStudent.status === 'REVISION_SUBMITTED';
+    if (isRevisionSubmitted) {
+      setFeedbackNote('');
+      setModalFeedbackItems([]);
+    } else {
+      const latestPage = pages[pages.length - 1];
+      setFeedbackNote(latestPage?.teacherNote || selectedStudent.teacherNote || '');
+      setModalFeedbackItems(latestPage?.feedbackItems || selectedStudent.feedbackItems || []);
+    }
+  }, [selectedStudent?.number, currentTopic?.id, draftPages.length, selectedStudent?.status]);
 
   const showToast = (msg) => {
     setToastMsg(msg);
@@ -2261,6 +2294,113 @@ export default function TeacherDashboard({
                   </button>
                 </div>
               </div>
+
+              {/* 이전 차수(1차 등)에 학생에게 해주었던 첨삭 기록 보기 (2차 이상 첨삭 시 참고용 아코디언) */}
+              {hasPreviousFeedback && (
+                <div className="rounded-2xl border border-[#CBD5E1] bg-[#F8FAFC] overflow-hidden shadow-2xs">
+                  <button
+                    type="button"
+                    onClick={() => setShowPreviousFeedback((prev) => !prev)}
+                    className="w-full p-3 flex items-center justify-between text-xs font-bold text-[#1E293B] hover:bg-[#F1F5F9] transition cursor-pointer"
+                  >
+                    <div className="flex items-center gap-1.5">
+                      <History className="w-4 h-4 text-[#2D6A4F]" />
+                      <span>이전 첨삭 기록 보기</span>
+                      <span className="px-1.5 py-0.2 rounded bg-[#E2E8F0] text-[10px] text-[#475569] font-normal">
+                        {previousFeedbackPages.length > 0
+                          ? `${previousFeedbackPages.map((p) => p.label).join(', ')}`
+                          : '1차 첨삭'}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 text-[#475569]">
+                      <span className="text-[11px]">{showPreviousFeedback ? '접기' : '펼치기'}</span>
+                      {showPreviousFeedback ? (
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      ) : (
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      )}
+                    </div>
+                  </button>
+
+                  {showPreviousFeedback && (
+                    <div className="p-3.5 pt-0 space-y-3 border-t border-[#E2E8F0] bg-white text-xs">
+                      {previousFeedbackPages.length > 0 ? (
+                        previousFeedbackPages.map((pg) => (
+                          <div
+                            key={pg.round}
+                            className="p-3 rounded-xl bg-[#FBFBF9] border border-[#E2E8F0] space-y-2"
+                          >
+                            <div className="flex items-center justify-between font-bold text-[#1B4332]">
+                              <span>📌 {pg.label} 첨삭 기록</span>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (pg.teacherNote) setFeedbackNote(pg.teacherNote);
+                                  if (pg.feedbackItems?.length)
+                                    setModalFeedbackItems(pg.feedbackItems);
+                                  showToast(`${pg.label} 첨삭 내용을 현재 입력창으로 불러왔습니다.`);
+                                }}
+                                className="text-[11px] text-[#2D6A4F] hover:underline cursor-pointer flex items-center gap-1"
+                                title="이전 첨삭 내용을 현재 입력창에 복사해 수정할 수 있습니다"
+                              >
+                                <Copy className="w-3 h-3" />
+                                <span>이 첨삭 불러오기</span>
+                              </button>
+                            </div>
+
+                            {pg.teacherNote ? (
+                              <div className="whitespace-pre-wrap text-[#334155] leading-relaxed p-2.5 rounded-lg bg-white border border-[#E2E8F0] font-editorial-serif text-[13px]">
+                                {pg.teacherNote}
+                              </div>
+                            ) : (
+                              <div className="text-[#94A3B8] italic">종합 첨삭 없음</div>
+                            )}
+
+                            {pg.feedbackItems && pg.feedbackItems.length > 0 && (
+                              <div className="space-y-1 pt-1 border-t border-[#F1F5F9]">
+                                <div className="font-bold text-[#78350F] text-[11px]">
+                                  문장별 첨삭 ({pg.feedbackItems.length}건):
+                                </div>
+                                {pg.feedbackItems.map((item, idx) => (
+                                  <div
+                                    key={idx}
+                                    className="p-1.5 rounded bg-[#FEF9C3]/70 text-[11px] text-[#78350F]"
+                                  >
+                                    {item.quote && (
+                                      <span className="font-bold">"{item.quote}" </span>
+                                    )}
+                                    <span>→ {item.comment}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))
+                      ) : legacyPreviousNote ? (
+                        <div className="p-3 rounded-xl bg-[#FBFBF9] border border-[#E2E8F0] space-y-2">
+                          <div className="flex items-center justify-between font-bold text-[#1B4332]">
+                            <span>📌 1차 첨삭 기록</span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setFeedbackNote(legacyPreviousNote);
+                                showToast('1차 첨삭 내용을 현재 입력창으로 불러왔습니다.');
+                              }}
+                              className="text-[11px] text-[#2D6A4F] hover:underline cursor-pointer flex items-center gap-1"
+                            >
+                              <Copy className="w-3 h-3" />
+                              <span>이 첨삭 불러오기</span>
+                            </button>
+                          </div>
+                          <div className="whitespace-pre-wrap text-[#334155] leading-relaxed p-2.5 rounded-lg bg-white border border-[#E2E8F0] font-editorial-serif text-[13px]">
+                            {legacyPreviousNote}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* [핵심 1] 선생님이 가운데 본문에서 문장을 드래그했을 때만 스르륵 나타나는 부분 첨삭 입력창! */}
               {draggedQuote && (
