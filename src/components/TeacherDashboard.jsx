@@ -166,6 +166,7 @@ export default function TeacherDashboard({
   const [toastMsg, setToastMsg] = useState('');
   const [isPullingDoc, setIsPullingDoc] = useState(false);
   const [waitingDocReturn, setWaitingDocReturn] = useState(false);
+  const docOpenedTimeRef = useRef(0);
 
   const currentTopic = topics.find((t) => t.id === openedTopicId) || null;
 
@@ -224,20 +225,40 @@ export default function TeacherDashboard({
     if (!selectedStudent || !onPullFeedbackFromDoc || isPullingDoc) return;
     setIsPullingDoc(true);
     try {
-      const res = await onPullFeedbackFromDoc(selectedStudent.number, currentTopic?.id);
+      const res = await onPullFeedbackFromDoc(
+        selectedStudent.number,
+        currentTopic?.id,
+        selectedStudent.docId
+      );
       if (res && res.ok) {
-        if (res.pulledNote && res.pulledNote.trim()) {
-          setFeedbackNote(translateBriskTextToKorean(res.pulledNote.trim()));
+        const hasNote = Boolean(res.pulledNote && res.pulledNote.trim());
+        const hasComments = Array.isArray(res.pulledComments) && res.pulledComments.length > 0;
+
+        if (hasNote || hasComments) {
+          if (hasNote) {
+            setFeedbackNote(translateBriskTextToKorean(res.pulledNote.trim()));
+          }
+          if (hasComments) {
+            setModalFeedbackItems(res.pulledComments);
+          }
+          setWaitingDocReturn(false);
+          showToast(
+            isAutoFocus
+              ? `${selectedStudent.name} 학생 독스에서 첨삭을 한국어로 변환해 자동으로 가져왔습니다!`
+              : `${selectedStudent.name} 학생 독스에서 첨삭 내용을 성공적으로 가져왔습니다!`
+          );
+        } else {
+          // 독스에 아직 첨삭이 들어있지 않은 경우
+          if (!isAutoFocus) {
+            showToast(
+              '구글 독스에 아직 Brisk 첨삭이 입력되지 않았습니다. 독스에서 Brisk 첨삭(Insert)을 먼저 완료해 주세요.'
+            );
+          }
         }
-        if (Array.isArray(res.pulledComments) && res.pulledComments.length > 0) {
-          setModalFeedbackItems(res.pulledComments);
+      } else {
+        if (!isAutoFocus) {
+          showToast(res?.error || '독스에서 첨삭을 가져오지 못했습니다. 학생 독스를 먼저 열어주세요.');
         }
-        setWaitingDocReturn(false);
-        showToast(
-          isAutoFocus
-            ? '구글 독스 탭에서 돌아오신 것을 감지해 첨삭 내용을 한국어로 자동 변환해 가져왔습니다!'
-            : '학생 구글 독스에서 첨삭 내용(GLOW·GROW·WONDERING 한국어 변환)을 자동으로 가져왔습니다!'
-        );
       }
     } finally {
       setIsPullingDoc(false);
@@ -248,6 +269,9 @@ export default function TeacherDashboard({
   useEffect(() => {
     if (!waitingDocReturn || !selectedStudent) return;
     const onWindowFocus = () => {
+      // 독스를 연 지 4초 이상 경과한 뒤 복귀했을 때만 자동 동기화 시도 (새 탭 클릭하자마자 0초 만에 튕기는 현상 방지)
+      const elapsed = Date.now() - docOpenedTimeRef.current;
+      if (elapsed < 4000) return;
       handlePullFromDoc(true);
     };
     window.addEventListener('focus', onWindowFocus);
@@ -263,9 +287,18 @@ export default function TeacherDashboard({
     } catch (e) {}
   };
 
-  // 해당 학생의 전용 구글 독스로 바로 연결 (아직 독스가 없으면 내 드라이브에 자동 생성!) + Brisk 프롬프트 자동 복사 + 탭 복귀 대기 활성화
+  // 해당 학생의 전용 구글 독스로 바로 연결 (비동기 팝업 차단 방지 적용) + Brisk 프롬프트 자동 복사
   const handleOpenDocWithBrisk = async (st) => {
-    setWaitingDocReturn(true);
+    // 1. 브라우저 팝업 차단을 방지하기 위해 사용자 클릭 직후 빈 탭을 동기적으로 먼저 확보합니다!
+    const newTab = window.open('about:blank', '_blank');
+    if (newTab) {
+      try {
+        newTab.document.write(
+          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${st.name} 학생 구글 독스 준비 중</title></head><body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;font-family:-apple-system,BlinkMacSystemFont,'Pretendard',sans-serif;color:#1B4332;background:#F8FAFC;"><div style="background:white;padding:36px;border-radius:18px;border:1px solid #CBD5E1;box-shadow:0 4px 12px rgba(0,0,0,0.05);text-align:center;"><h2 style="margin:0 0 10px 0;font-size:20px;">${st.name} 학생의 구글 독스를 준비하고 있습니다...</h2><p style="margin:0;color:#64748B;font-size:14px;">최신 본문 동기화가 끝나면 곧바로 문서로 이동합니다.</p></div></body></html>`
+        );
+      } catch (e) {}
+    }
+
     try {
       await navigator.clipboard.writeText(DEFAULT_BRISK_PROMPT);
     } catch (e) {}
@@ -282,15 +315,23 @@ export default function TeacherDashboard({
       }
     }
 
-    showToast(
-      `${st.name} 학생 독스를 열었습니다! 독스에서 Brisk로 첨삭(Insert) 후 이 창으로 돌아오면 자동으로 가져옵니다.`
-    );
-
     const targetUrl =
       targetDocId && !String(targetDocId).startsWith('DEMO_')
         ? `https://docs.google.com/document/d/${targetDocId}/edit`
         : targetDocUrl || 'https://docs.google.com/document/u/0/';
-    window.open(targetUrl, '_blank', 'noopener,noreferrer');
+
+    // 2. 준비된 탭의 주소를 해당 학생의 구글 독스 URL로 변경
+    if (newTab && !newTab.closed) {
+      newTab.location.href = targetUrl;
+    } else {
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    }
+
+    docOpenedTimeRef.current = Date.now();
+    setWaitingDocReturn(true);
+    showToast(
+      `${st.name} 학생 독스를 열었습니다! 독스에서 Brisk로 첨삭(Insert) 후 이 창으로 돌아오면 자동으로 가져옵니다.`
+    );
   };
 
   // 클립보드에서 종합 첨삭 바로 붙여넣기 도우미 (GLOW / GROW / WONDERING 자동 한국어 변환 포함)

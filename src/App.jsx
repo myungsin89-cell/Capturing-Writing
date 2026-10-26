@@ -1499,7 +1499,7 @@ export default function App() {
 
   // [핵심] 학생 구글 독스에서 Brisk로 넣은 종합 첨삭(표/문단)과 부분 첨삭(댓글)을 앱으로 자동 가져오기!
   const handlePullFeedbackFromDoc = useCallback(
-    async (studentNumber, topicId) => {
+    async (studentNumber, topicId, explicitDocId) => {
       const targetSt = students.find(
         (s) => belongsToActiveClass(s) && String(s.number) === String(studentNumber)
       );
@@ -1508,7 +1508,9 @@ export default function App() {
       const targetTopicData = isActiveTopic
         ? targetSt
         : { ...targetSt, ...(targetSt?.historyByTopic?.[targetTopicId] || {}) };
-      const targetDocId = targetTopicData?.docId;
+      const targetDocId =
+        (explicitDocId && !String(explicitDocId).startsWith('DEMO_') ? explicitDocId : null) ||
+        targetTopicData?.docId;
 
       // 1순위: 교사 Google OAuth 토큰으로 직접 내 구글 독스에서 Brisk 표/댓글 읽어오기!
       if (
@@ -1553,7 +1555,15 @@ export default function App() {
         }
       }
 
-      // 3순위: 데모 체험 모드
+      // 구글 로그인 상태인데 독스가 아직 없거나 읽어오지 못한 경우 (다른 학생 데모 데이터로 덮어쓰지 않음!)
+      if (googleAuth?.accessToken) {
+        return {
+          ok: false,
+          error: '학생 구글 독스가 아직 생성되지 않았거나 열리지 않았습니다. [1. 학생 독스 열기]를 먼저 눌러주세요.'
+        };
+      }
+
+      // 3순위: 로그인하지 않은 순수 체험(데모) 모드일 때만 예시 안내 문구 제공
       const stName = targetSt?.name || '학생';
       const demoNote = `[칭찬해요 · 잘한 점]\n• ${stName} 학생이 겪은 일을 시작·가운데·끝 문단으로 나누어 차례대로 잘 정리했어요.\n• 자신의 솔직한 마음과 생각이 자연스럽게 드러나서 읽는 사람도 장면이 생생하게 떠올라요.\n\n[더 자랄 점 · 고쳐 볼 점]\n• 가장 기억에 남는 장면에서 그때 들렸던 소리나 표정을 한 문장 더 자세히 묘사해 볼까요?\n\n[궁금해요 · 더 생각해 볼 점]\n• 오늘 겪은 일을 통해 앞으로 어떤 다짐을 하게 되었는지 마지막 문단에 한 줄 더 들려줄래요?`;
 
