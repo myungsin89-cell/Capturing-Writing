@@ -139,13 +139,15 @@ function resetDocWithCleanStudentText_(docId, studentText, pieceTitle, authorNam
     marker.editAsText().setFontSize(1).setForegroundColor('#ffffff');
     const title = body.appendParagraph(String(pieceTitle || '').trim() || '제목 없음');
     title.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
-    title.editAsText().setBold(true).setFontSize(16);
+    title.editAsText().setBold(true).setFontSize(18).setFontFamily('Noto Serif KR');
     const author = body.appendParagraph(String(authorName || '').trim());
     author.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+    author.editAsText().setBold(true).setFontSize(14).setFontFamily('Noto Serif KR');
     body.appendParagraph('');
     const paragraphs = String(studentText || '').replace(/\r\n/g, '\n').split('\n');
     paragraphs.forEach(p => {
-      body.appendParagraph(p);
+      const paragraph = body.appendParagraph(p);
+      if (p) paragraph.editAsText().setFontSize(14).setFontFamily('Noto Serif KR');
     });
     doc.saveAndClose();
 
@@ -710,8 +712,8 @@ function createStudentDocs(payload) {
     const docId = doc.getId();
     const body = doc.getBody();
 
-    body.appendParagraph(STUDENT_TEXT_MARKER);
-    body.appendParagraph('(학생이 쓰담 웹앱에서 글을 제출하면 이 영역에 문단 그대로 본문이 채워집니다.)');
+    const marker = body.appendParagraph(STUDENT_TEXT_MARKER);
+    marker.editAsText().setFontSize(1).setForegroundColor('#ffffff');
     doc.saveAndClose();
 
     const file = DriveApp.getFileById(docId);

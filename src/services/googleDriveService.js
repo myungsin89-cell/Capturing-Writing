@@ -747,7 +747,8 @@ export async function resetGoogleDocWithStudentText(
 
   const cleanTitle = String(pieceTitle || '').trim() || '제목 없음';
   const cleanAuthor = String(authorName || '').trim();
-  const rawBody = String(studentText || '').replace(/\r\n/g, '\n').trim();
+  // 학생 공책에 입력한 문단·들여쓰기·끝줄을 임의로 잘라내지 않고 그대로 보존합니다.
+  const rawBody = String(studentText || '').replace(/\r\n/g, '\n');
 
   try {
     const doc = await googleFetch(
@@ -785,6 +786,14 @@ export async function resetGoogleDocWithStudentText(
     const titleLine = `${cleanTitle}\n`;
     const authorLine = `${cleanAuthor ? cleanAuthor + '\n' : ''}`;
     const cleanBody = `${markerLine}${titleLine}${authorLine}\n${rawBody}\n`;
+    const documentStart = 1;
+    const documentEnd = documentStart + cleanBody.length;
+    const markerEnd = documentStart + markerLine.length;
+    const titleStart = documentStart + markerLine.length;
+    const titleEnd = titleStart + cleanTitle.length;
+    const authorStart = titleStart + titleLine.length;
+    const authorEnd = authorStart + cleanAuthor.length;
+    const bodyStart = authorStart + authorLine.length + 1;
 
     requests.push({
       insertText: {
@@ -792,6 +801,107 @@ export async function resetGoogleDocWithStudentText(
         text: cleanBody
       }
     });
+
+    // 학생 공책과 같은 인상으로 제목·이름·본문을 정리합니다.
+    requests.push({
+      updateTextStyle: {
+        range: { startIndex: documentStart, endIndex: documentEnd },
+        textStyle: {
+          weightedFontFamily: { fontFamily: 'Noto Serif KR' },
+          fontSize: { magnitude: 14.5, unit: 'PT' },
+          foregroundColor: {
+            color: { rgbColor: { red: 0.118, green: 0.161, blue: 0.231 } }
+          }
+        },
+        fields: 'weightedFontFamily,fontSize,foregroundColor'
+      }
+    });
+
+    // 첨삭 추출에 필요한 내부 마커는 독스 화면에서는 보이지 않게 숨깁니다.
+    requests.push({
+      updateTextStyle: {
+        range: { startIndex: documentStart, endIndex: markerEnd },
+        textStyle: {
+          fontSize: { magnitude: 1, unit: 'PT' },
+          foregroundColor: {
+            color: { rgbColor: { red: 1, green: 1, blue: 1 } }
+          }
+        },
+        fields: 'fontSize,foregroundColor'
+      }
+    });
+    requests.push({
+      updateParagraphStyle: {
+        range: { startIndex: documentStart, endIndex: markerEnd },
+        paragraphStyle: {
+          lineSpacing: 100,
+          spaceAbove: { magnitude: 0, unit: 'PT' },
+          spaceBelow: { magnitude: 0, unit: 'PT' }
+        },
+        fields: 'lineSpacing,spaceAbove,spaceBelow'
+      }
+    });
+
+    requests.push(
+      {
+        updateTextStyle: {
+          range: { startIndex: titleStart, endIndex: titleEnd },
+          textStyle: {
+            bold: true,
+            fontSize: { magnitude: 18, unit: 'PT' }
+          },
+          fields: 'bold,fontSize'
+        }
+      },
+      {
+        updateParagraphStyle: {
+          range: { startIndex: titleStart, endIndex: titleEnd + 1 },
+          paragraphStyle: {
+            alignment: 'CENTER',
+            spaceBelow: { magnitude: 9, unit: 'PT' }
+          },
+          fields: 'alignment,spaceBelow'
+        }
+      }
+    );
+
+    if (cleanAuthor) {
+      requests.push(
+        {
+          updateTextStyle: {
+            range: { startIndex: authorStart, endIndex: authorEnd },
+            textStyle: {
+              bold: true,
+              fontSize: { magnitude: 14.5, unit: 'PT' },
+              foregroundColor: {
+                color: { rgbColor: { red: 0.278, green: 0.353, blue: 0.443 } }
+              }
+            },
+            fields: 'bold,fontSize,foregroundColor'
+          }
+        },
+        {
+          updateParagraphStyle: {
+            range: { startIndex: authorStart, endIndex: authorEnd + 1 },
+            paragraphStyle: {
+              alignment: 'END',
+              spaceBelow: { magnitude: 16, unit: 'PT' }
+            },
+            fields: 'alignment,spaceBelow'
+          }
+        }
+      );
+    }
+
+    if (bodyStart < documentEnd) {
+      requests.push({
+        updateParagraphStyle: {
+          range: { startIndex: bodyStart, endIndex: documentEnd },
+          paragraphStyle: { lineSpacing: 160 },
+          fields: 'lineSpacing'
+        }
+      });
+    }
 
     if (requests.length > 0) {
       await googleFetch(
