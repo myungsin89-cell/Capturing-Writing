@@ -662,7 +662,7 @@ export default function StudentStudio({
                   value={editorText}
                   onChange={(e) => setEditorText(e.target.value)}
                   disabled={isReadOnly}
-                  placeholder="첫 문단을 시작할 때는 두 칸을 띄어 쓰고, 생각이 바뀌면 엔터를 두 번 눌러 문단을 나누어 써 보세요."
+                  placeholder="여기에 글을 시작해 주세요."
                   className="min-h-[330px] w-full bg-transparent border-0 p-0 focus:outline-none font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] resize-none leading-8 whitespace-pre-wrap disabled:opacity-75 disabled:cursor-not-allowed"
                 />
               )}
