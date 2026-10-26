@@ -600,7 +600,7 @@ export default function StudentStudio({
                   {pieceTitle || topicStudentData?.pieceTitle || selectedTopic.title}
                 </h3>
               )}
-              <div className="mt-3 mb-8 text-right text-sm sm:text-base font-semibold text-[#475569]">
+              <div className="mt-3 mb-8 pr-[10%] text-right text-lg sm:text-[19.5px] leading-8 font-semibold text-[#475569]">
                 {currentStudent.name}
               </div>
 
