@@ -82,6 +82,8 @@ export default function App() {
   // 기본 접속은 교사 화면('teacher'), 학생 전용 링크(?student=1)로 접속했을 때만 학생 화면('student')으로 시작!
   const [roleMode, setRoleMode] = useState(() => (isStudentUrlMode ? 'student' : 'teacher'));
   const [activeStudent, setActiveStudent] = useState(null);
+  const [isTeacherPreview, setIsTeacherPreview] = useState(false);
+  const [teacherPreviewTopicId, setTeacherPreviewTopicId] = useState('');
 
   const [gasUrl, setGasUrl] = useState(
     () => urlGasUrl || localStorage.getItem(STORAGE_KEYS.GAS_URL) || ''
@@ -1382,9 +1384,18 @@ export default function App() {
     [googleAuth?.accessToken, gasUrl, callGasApi, students, config.activeTopicId]
   );
 
-  const handlePreviewAsStudent = (student) => {
+  const handlePreviewAsStudent = (student, topicId = config.activeTopicId || '') => {
     setActiveStudent(student);
+    setTeacherPreviewTopicId(topicId || config.activeTopicId || '');
+    setIsTeacherPreview(true);
     setRoleMode('student');
+  };
+
+  const handleExitTeacherPreview = () => {
+    setActiveStudent(null);
+    setTeacherPreviewTopicId('');
+    setIsTeacherPreview(false);
+    setRoleMode('teacher');
   };
 
   const handleTeacherLogout = () => {
@@ -1430,7 +1441,12 @@ export default function App() {
               <div className="inline-flex rounded-xl bg-white border border-[#1B4332] p-0.5">
                 <button
                   type="button"
-                  onClick={() => setRoleMode('student')}
+                  onClick={() => {
+                    setActiveStudent(null);
+                    setTeacherPreviewTopicId('');
+                    setIsTeacherPreview(false);
+                    setRoleMode('student');
+                  }}
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap cursor-pointer ${
                     roleMode === 'student'
                       ? 'bg-[#1B4332] text-white'
@@ -1446,7 +1462,8 @@ export default function App() {
                     if (typeof window !== 'undefined' && window.location.search.includes('student=1')) {
                       window.history.replaceState({}, '', window.location.pathname);
                     }
-                    setRoleMode('teacher');
+                    if (isTeacherPreview) handleExitTeacherPreview();
+                    else setRoleMode('teacher');
                   }}
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap cursor-pointer ${
                     roleMode === 'teacher'
@@ -1471,8 +1488,16 @@ export default function App() {
             questions={visibleQuestions}
             config={config}
             activeStudent={activeStudent}
+            isTeacherPreview={isTeacherPreview}
+            initialTopicId={teacherPreviewTopicId}
             onLoginStudent={handleStudentLogin}
-            onLogoutStudent={isStudentUrlMode ? handleStudentLogout : () => setActiveStudent(null)}
+            onLogoutStudent={
+              isStudentUrlMode
+                ? handleStudentLogout
+                : isTeacherPreview
+                ? handleExitTeacherPreview
+                : () => setActiveStudent(null)
+            }
             onSubmitStage={handleSubmitStage}
             onAddQuestion={handleAddQuestion}
           />

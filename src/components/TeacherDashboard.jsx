@@ -1589,7 +1589,7 @@ export default function TeacherDashboard({
               (a, b) => Number(a.st.number) - Number(b.st.number)
             );
 
-            const renderStudentRow = ({ st, unresolvedCount, needsAction }) => {
+            const renderStudentRow = ({ rawSt, st, unresolvedCount, needsAction }) => {
               const isSelected = String(st.number) === String(selectedStudent?.number);
               const meta = STAGE_META[st.status] || STAGE_META.STAGE_1_WRITING;
               const textLen = (
@@ -1601,10 +1601,8 @@ export default function TeacherDashboard({
               ).trim().length;
 
               return (
-                <button
+                <div
                   key={st.number}
-                  type="button"
-                  onClick={() => setSelectedStudentNumber(st.number)}
                   className={`relative w-full text-left p-3 rounded-2xl border transition flex items-center justify-between gap-2 cursor-pointer ${
                     isSelected
                       ? 'bg-[#F2F9F5] border-2 border-[#1B4332] shadow-xs'
@@ -1620,34 +1618,48 @@ export default function TeacherDashboard({
                     </span>
                   )}
 
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span
-                      className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center shrink-0 ${
-                        isSelected
-                          ? 'bg-[#1B4332] text-white'
-                          : 'bg-white border border-[#CBD5E1] text-[#1B4332]'
-                      }`}
-                    >
-                      {st.number}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="text-sm font-bold text-[#1E293B] truncate">
-                        {st.name}
-                      </div>
-                      <div className="text-[11px] text-[#64748B] truncate">
-                        {textLen > 0 ? `${textLen}자 작성됨` : '작성 전'}
+                  <button
+                    type="button"
+                    onClick={() => setSelectedStudentNumber(st.number)}
+                    className="flex-1 min-w-0 flex items-center justify-between gap-2 text-left cursor-pointer"
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center shrink-0 ${
+                          isSelected
+                            ? 'bg-[#1B4332] text-white'
+                            : 'bg-white border border-[#CBD5E1] text-[#1B4332]'
+                        }`}
+                      >
+                        {st.number}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-sm font-bold text-[#1E293B] truncate">
+                          {st.name}
+                        </div>
+                        <div className="text-[11px] text-[#64748B] truncate">
+                          {textLen > 0 ? `${textLen}자 작성됨` : '작성 전'}
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <div className="flex items-center shrink-0">
                     <span
                       className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${meta.badgeBg} ${meta.badgeBorder} ${meta.badgeText}`}
                     >
                       {meta.shortLabel}
                     </span>
-                  </div>
-                </button>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => onPreviewAsStudent(rawSt, currentTopic?.id)}
+                    className="relative z-10 p-1.5 rounded-lg bg-white border border-[#CBD5E1] text-[#475569] hover:text-[#1B4332] hover:border-[#1B4332] cursor-pointer shrink-0"
+                    title={`${st.name} 학생 공책 바로 보기`}
+                    aria-label={`${st.name} 학생 공책 바로 보기`}
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               );
             };
 
@@ -1752,11 +1764,11 @@ export default function TeacherDashboard({
 
                   <button
                     type="button"
-                    onClick={() => onPreviewAsStudent(rawSelectedStudent)}
+                    onClick={() => onPreviewAsStudent(rawSelectedStudent, currentTopic?.id)}
                     className="px-2.5 py-1.5 rounded-xl bg-[#FBFBF9] border border-[#CBD5E1] text-xs font-bold text-[#475569] hover:text-[#1B4332] flex items-center gap-1 cursor-pointer"
                   >
                     <Eye className="w-3.5 h-3.5" />
-                    <span>학생뷰</span>
+                    <span>학생 공책 바로 보기</span>
                   </button>
                 </div>
               </div>

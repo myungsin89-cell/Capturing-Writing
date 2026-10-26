@@ -33,6 +33,8 @@ export default function StudentStudio({
   questions,
   config,
   activeStudent,
+  isTeacherPreview = false,
+  initialTopicId = '',
   onLoginStudent,
   onLogoutStudent,
   onSubmitStage,
@@ -64,10 +66,10 @@ export default function StudentStudio({
     students.find((s) => String(s.number) === String(activeStudent?.number)) ||
     activeStudent;
 
-  // 학생이 바뀌면 책장 화면부터 보여주도록 초기화
+  // 학생은 책장부터, 교사 미리보기는 선택한 주제 공책부터 바로 보여줍니다.
   useEffect(() => {
-    setOpenedTopicId(null);
-  }, [currentStudent?.number]);
+    setOpenedTopicId(isTeacherPreview && initialTopicId ? initialTopicId : null);
+  }, [currentStudent?.number, isTeacherPreview, initialTopicId]);
 
   // 특정 주제에 대한 이 학생의 글 데이터 가져오기 헬퍼
   const getStudentDataForTopic = (topic) => {
@@ -167,6 +169,7 @@ export default function StudentStudio({
   };
 
   const handleStageSubmit = async () => {
+    if (isTeacherPreview) return;
     if (!pieceTitle.trim()) {
       showToast('작품 제목을 먼저 지어 주세요.');
       return;
@@ -203,6 +206,7 @@ export default function StudentStudio({
 
   const handleQuestionSubmit = async (e) => {
     e.preventDefault();
+    if (isTeacherPreview) return;
     if (!questionInput.trim()) return;
     const result = await onAddQuestion({
       number: currentStudent.number,
@@ -326,7 +330,7 @@ export default function StudentStudio({
             className="sketch-btn-secondary px-4 py-2.5 text-xs sm:text-sm font-bold flex items-center gap-1.5 self-start sm:self-auto"
           >
             <LogOut className="w-4 h-4" />
-            <span>다른 번호로 입장하기</span>
+            <span>{isTeacherPreview ? '선생님 관리로 돌아가기' : '다른 번호로 입장하기'}</span>
           </button>
         </div>
 
@@ -416,6 +420,7 @@ export default function StudentStudio({
   // 화면 3: 책장에서 선택한 주제의 『와이드 글쓰기 공책 화면』
   // ============================================================================
   const isLocked = Boolean(topicStudentData?.locked) || Boolean(selectedTopic?.classLocked);
+  const isReadOnly = isTeacherPreview || isLocked;
   const hasRevision = draftPages.length >= 2;
   const activeDisplayText =
     viewingPageIdx !== null && draftPages[viewingPageIdx]
@@ -449,11 +454,14 @@ export default function StudentStudio({
         <div className="flex items-center gap-3 min-w-0">
           <button
             type="button"
-            onClick={() => setOpenedTopicId(null)}
+            onClick={() => {
+              if (isTeacherPreview) onLogoutStudent();
+              else setOpenedTopicId(null);
+            }}
             className="sketch-btn-secondary px-3.5 py-2 text-xs sm:text-sm font-bold flex items-center gap-1.5 shrink-0"
           >
             <ArrowLeft className="w-4 h-4" />
-            <span>내 글쓰기 책장으로</span>
+            <span>{isTeacherPreview ? '선생님 관리로 돌아가기' : '내 글쓰기 책장으로'}</span>
           </button>
 
           <span className="px-3 py-1 rounded-xl bg-[#1B4332] text-white text-xs sm:text-sm font-bold shrink-0">
@@ -466,6 +474,12 @@ export default function StudentStudio({
         </div>
 
         <div className="flex items-center gap-2.5 shrink-0">
+          {isTeacherPreview && (
+            <span className="px-3 py-1.5 rounded-xl bg-[#FEF3C7] border border-[#F59E0B] text-xs font-bold text-[#92400E] flex items-center gap-1.5">
+              <BookOpen className="w-3.5 h-3.5" />
+              교사 읽기 전용
+            </span>
+          )}
           <button
             type="button"
             onClick={() => setIsDiffModalOpen(true)}
@@ -529,7 +543,7 @@ export default function StudentStudio({
                         {pg.label}
                       </button>
                     ))}
-                    {!isLocked && (
+                    {!isReadOnly && (
                       <button
                         type="button"
                         onClick={() => {
@@ -558,7 +572,7 @@ export default function StudentStudio({
                     <span>형광펜 끄고 계속 고쳐 쓰기</span>
                   </button>
                 ) : (
-                  !isLocked &&
+                  !isReadOnly &&
                   viewingPageIdx === null &&
                   !showGreenText && (
                     <button
@@ -585,7 +599,7 @@ export default function StudentStudio({
                   : 'border-[#CBD5E1] focus-within:border-[#1B4332]'
               }`}
             >
-              {!isLocked && viewingPageIdx === null && !highlightedQuote && !showGreenText ? (
+              {!isReadOnly && viewingPageIdx === null && !highlightedQuote && !showGreenText ? (
                 <input
                   type="text"
                   value={pieceTitle}
@@ -607,7 +621,7 @@ export default function StudentStudio({
               {highlightedQuote || showGreenText || viewingPageIdx !== null ? (
                 <div
                   onClick={() => {
-                    if (!isLocked) {
+                    if (!isReadOnly) {
                       setHighlightedQuote('');
                       setShowGreenText(false);
                       setViewingPageIdx(null);
@@ -622,7 +636,7 @@ export default function StudentStudio({
                         : showGreenText
                         ? '고치며 새로 추가한 표현이 초록색 글씨로 표시되었어요!'
                         : `${draftPages[viewingPageIdx]?.label || '이전 차수'} 완성본을 보고 있어요.`}
-                      {!isLocked ? ' (공책을 클릭하면 바로 이어서 고쳐 쓸 수 있어요)' : ''}
+                      {!isReadOnly ? ' (공책을 클릭하면 바로 이어서 고쳐 쓸 수 있어요)' : ''}
                     </span>
                   </div>
                   {showGreenText
@@ -638,7 +652,7 @@ export default function StudentStudio({
                   ref={textareaRef}
                   value={editorText}
                   onChange={(e) => setEditorText(e.target.value)}
-                  disabled={isLocked}
+                  disabled={isReadOnly}
                   placeholder="첫 문단을 시작할 때는 두 칸을 띄어 쓰고, 생각이 바뀌면 엔터를 두 번 눌러 문단을 나누어 써 보세요."
                   className="min-h-[330px] w-full bg-transparent border-0 p-0 focus:outline-none font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] resize-none leading-8 whitespace-pre-wrap disabled:opacity-75 disabled:cursor-not-allowed"
                 />
@@ -651,7 +665,12 @@ export default function StudentStudio({
               * 오른쪽의 첨삭 메모를 클릭하면 내 글의 어느 문장인지 노란 형광펜으로 보여줍니다.
             </span>
 
-            {isLocked ? (
+            {isTeacherPreview ? (
+              <div className="py-3.5 px-6 rounded-xl bg-[#FEF3C7] border border-[#F59E0B] text-sm font-bold text-[#92400E] flex items-center gap-2">
+                <BookOpen className="w-4 h-4" />
+                <span>교사 미리보기에서는 학생 공책을 읽기만 할 수 있습니다</span>
+              </div>
+            ) : isLocked ? (
               <div className="py-3.5 px-6 rounded-xl bg-[#F2F9F5] border border-[#52B788] text-sm font-bold text-[#1B4332] flex items-center gap-2">
                 <HandDrawnCheckIcon size={18} color="#1B4332" />
                 <span>제출 완료된 글입니다</span>
@@ -790,22 +809,24 @@ export default function StudentStudio({
               </div>
             )}
 
-            <form onSubmit={handleQuestionSubmit} className="flex gap-2">
-              <input
-                type="text"
-                value={questionInput}
-                onChange={(e) => setQuestionInput(e.target.value)}
-                placeholder="궁금한 점을 적어 보세요"
-                className="flex-1 px-3.5 py-2.5 rounded-xl border border-[#CBD5E1] bg-white text-sm focus:outline-none focus:border-[#1B4332]"
-              />
-              <button
-                type="submit"
-                className="sketch-btn-secondary px-4 py-2.5 text-sm font-bold flex items-center gap-1.5 shrink-0"
-              >
-                <Send className="w-4 h-4" />
-                <span>질문</span>
-              </button>
-            </form>
+            {!isTeacherPreview && (
+              <form onSubmit={handleQuestionSubmit} className="flex gap-2">
+                <input
+                  type="text"
+                  value={questionInput}
+                  onChange={(e) => setQuestionInput(e.target.value)}
+                  placeholder="궁금한 점을 적어 보세요"
+                  className="flex-1 px-3.5 py-2.5 rounded-xl border border-[#CBD5E1] bg-white text-sm focus:outline-none focus:border-[#1B4332]"
+                />
+                <button
+                  type="submit"
+                  className="sketch-btn-secondary px-4 py-2.5 text-sm font-bold flex items-center gap-1.5 shrink-0"
+                >
+                  <Send className="w-4 h-4" />
+                  <span>질문</span>
+                </button>
+              </form>
+            )}
           </div>
         </div>
       </div>
