@@ -461,12 +461,13 @@ export async function saveFullStateToSpreadsheet(
   }
 
   const studentRows = [
-    ['출석번호', '이름', '상태', '1차 글', '2차 글', '3차 글', '4차 글', '선생님 종합 첨삭', '구글 독스 링크', '최근 수정']
+    ['출석번호', '이름', '작품 제목', '상태', '1차 글', '2차 글', '3차 글', '4차 글', '선생님 종합 첨삭', '구글 독스 링크', '최근 수정']
   ];
   safeStudents.forEach((st) => {
     studentRows.push([
       String(st.number || ''),
       String(st.name || ''),
+      String(st.pieceTitle || ''),
       String(st.status || ''),
       String(st.draft1 || ''),
       String(st.draft2 || ''),
@@ -554,6 +555,7 @@ export async function ensureAndSyncStudentGoogleDoc(
   const targetFolderId = folderId || (await ensureRootFolder(accessToken));
   const latestText =
     student.draft4 || student.draft3 || student.draft2 || student.draft1 || '';
+  const pieceTitle = student.pieceTitle || topicTitle || '제목 없음';
 
   let docId = student.docId;
   let docUrl = student.docUrl;
@@ -582,15 +584,23 @@ export async function ensureAndSyncStudentGoogleDoc(
   }
 
   // 학생의 최신 글로 독스 본문을 깨끗하게 세팅 (이전 Brisk 표 제거 포함)
-  await resetGoogleDocWithStudentText(accessToken, docId, latestText);
+  await resetGoogleDocWithStudentText(accessToken, docId, latestText, {
+    pieceTitle,
+    authorName: student.name || ''
+  });
 
   return { docId, docUrl };
 }
 
 /**
- * 구글 독스 안의 이전 Brisk 첨삭 표/문단/댓글을 지우고 학생의 순수 본문만 남깁니다.
+ * 구글 독스 안의 이전 Brisk 첨삭 표/문단/댓글을 지우고 작품 제목·이름·학생 본문만 남깁니다.
  */
-export async function resetGoogleDocWithStudentText(accessToken, docId, studentText) {
+export async function resetGoogleDocWithStudentText(
+  accessToken,
+  docId,
+  studentText,
+  { pieceTitle = '', authorName = '' } = {}
+) {
   if (!accessToken || !docId || String(docId).startsWith('DEMO_')) return;
 
   try {
@@ -611,13 +621,59 @@ export async function resetGoogleDocWithStudentText(accessToken, docId, studentT
       });
     }
 
-    const cleanBody = `${STUDENT_TEXT_MARKER}\n${String(studentText || '').replace(/\r\n/g, '\n')}\n`;
+    const cleanTitle = String(pieceTitle || '').trim() || '제목 없음';
+    const cleanAuthor = String(authorName || '').trim();
+    const markerLine = `${STUDENT_TEXT_MARKER}\n`;
+    const titleLine = `${cleanTitle}\n`;
+    const authorLine = `${cleanAuthor}\n`;
+    const cleanBody = `${markerLine}${titleLine}${authorLine}\n${String(studentText || '').replace(/\r\n/g, '\n')}\n`;
     requests.push({
       insertText: {
         location: { index: 1 },
         text: cleanBody
       }
     });
+
+    const markerStart = 1;
+    const markerEnd = markerStart + STUDENT_TEXT_MARKER.length;
+    const titleStart = markerStart + markerLine.length;
+    const titleEnd = titleStart + cleanTitle.length;
+    const authorStart = titleStart + titleLine.length;
+    const authorEnd = authorStart + cleanAuthor.length;
+
+    requests.push({
+      updateTextStyle: {
+        range: { startIndex: markerStart, endIndex: markerEnd },
+        textStyle: {
+          fontSize: { magnitude: 1, unit: 'PT' },
+          foregroundColor: { color: { rgbColor: { red: 1, green: 1, blue: 1 } } }
+        },
+        fields: 'fontSize,foregroundColor'
+      }
+    });
+    requests.push({
+      updateTextStyle: {
+        range: { startIndex: titleStart, endIndex: titleEnd },
+        textStyle: { bold: true, fontSize: { magnitude: 16, unit: 'PT' } },
+        fields: 'bold,fontSize'
+      }
+    });
+    requests.push({
+      updateParagraphStyle: {
+        range: { startIndex: titleStart, endIndex: titleEnd + 1 },
+        paragraphStyle: { alignment: 'CENTER' },
+        fields: 'alignment'
+      }
+    });
+    if (cleanAuthor) {
+      requests.push({
+        updateParagraphStyle: {
+          range: { startIndex: authorStart, endIndex: authorEnd + 1 },
+          paragraphStyle: { alignment: 'END' },
+          fields: 'alignment'
+        }
+      });
+    }
 
     await googleFetch(
       `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`,
@@ -1111,6 +1167,11 @@ export async function callDirectSheetStudentApi(payload = {}) {
 
       const stage = Math.max(1, Math.min(4, Number(payload.stage || 1)));
       const text = String(payload.text || '');
+      const pieceTitle = String(payload.pieceTitle || '').trim();
+      if (!pieceTitle) return { ok: false, error: '작품 제목을 먼저 지어 주세요.' };
+      if (pieceTitle.length > 50) {
+        return { ok: false, error: '작품 제목은 50자 이내로 작성해 주세요.' };
+      }
       if (!text.trim()) return { ok: false, error: '글을 먼저 작성해 주세요.' };
       if (text.length > 30000) {
         return { ok: false, error: '글은 30,000자 이내로 작성해 주세요.' };
@@ -1131,6 +1192,7 @@ export async function callDirectSheetStudentApi(payload = {}) {
       if (isActive) {
         student.status = nextStatus;
         student.locked = true;
+        student.pieceTitle = pieceTitle;
         student[`draft${stage}`] = text;
         student.classId = classId;
         student.updatedAt = `오늘 ${now}`;
@@ -1141,6 +1203,7 @@ export async function callDirectSheetStudentApi(payload = {}) {
           [topic.id]: {
             ...(student.historyByTopic?.[topic.id] || {}),
             status: nextStatus,
+            pieceTitle,
             [`draft${stage}`]: text,
             locked: true,
             updatedAt: `오늘 ${now}`,

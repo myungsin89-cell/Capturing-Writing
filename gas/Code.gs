@@ -116,9 +116,9 @@ function getOrCreateClassFolder() {
 
 /**
  * [자동 청소 헬퍼] 독스에 남아있는 이전 차수 Brisk 표(Insert), 추가 문단, 옛날 댓글을
- * 교사가 손대지 않아도 100% 깨끗하게 지우고 오직 '학생의 순수 본문'만 남깁니다.
+ * 교사가 손대지 않아도 100% 깨끗하게 지우고 작품 제목·이름·학생 본문만 남깁니다.
  */
-function resetDocWithCleanStudentText_(docId, studentText) {
+function resetDocWithCleanStudentText_(docId, studentText, pieceTitle, authorName) {
   if (!docId || String(docId).startsWith('DEMO_')) return;
   try {
     const doc = DocumentApp.openById(docId);
@@ -131,7 +131,14 @@ function resetDocWithCleanStudentText_(docId, studentText) {
     }
     body.clear();
 
-    body.appendParagraph(STUDENT_TEXT_MARKER);
+    const marker = body.appendParagraph(STUDENT_TEXT_MARKER);
+    marker.editAsText().setFontSize(1).setForegroundColor('#ffffff');
+    const title = body.appendParagraph(String(pieceTitle || '').trim() || '제목 없음');
+    title.setAlignment(DocumentApp.HorizontalAlignment.CENTER);
+    title.editAsText().setBold(true).setFontSize(16);
+    const author = body.appendParagraph(String(authorName || '').trim());
+    author.setAlignment(DocumentApp.HorizontalAlignment.RIGHT);
+    body.appendParagraph('');
     const paragraphs = String(studentText || '').replace(/\r\n/g, '\n').split('\n');
     paragraphs.forEach(p => {
       body.appendParagraph(p);
@@ -391,6 +398,9 @@ function submitStageV2(payload) {
 
   const stage = Math.max(1, Math.min(4, Number(payload.stage || 1)));
   const text = String(payload.text || '');
+  const pieceTitle = String(payload.pieceTitle || '').trim();
+  if (!pieceTitle) return { ok: false, error: '작품 제목을 먼저 지어 주세요.' };
+  if (pieceTitle.length > 50) return { ok: false, error: '작품 제목은 50자 이내로 작성해 주세요.' };
   if (!text.trim()) return { ok: false, error: '글을 먼저 작성해 주세요.' };
   if (text.length > 30000) return { ok: false, error: '글은 30,000자 이내로 작성해 주세요.' };
 
@@ -404,6 +414,7 @@ function submitStageV2(payload) {
   if (isActive) {
     student.status = nextStatus;
     student.locked = true;
+    student.pieceTitle = pieceTitle;
     student['draft' + stage] = text;
     student.classId = session.classId;
     student.updatedAt = now;
@@ -412,6 +423,7 @@ function submitStageV2(payload) {
     student.historyByTopic = student.historyByTopic || {};
     const topicRecord = student.historyByTopic[topic.id] || {};
     topicRecord.status = nextStatus;
+    topicRecord.pieceTitle = pieceTitle;
     topicRecord['draft' + stage] = text;
     topicRecord.locked = true;
     topicRecord.updatedAt = now;
@@ -596,7 +608,7 @@ function submitStage(payload) {
         }
 
         // 이전 1차 Brisk 표/문단/댓글을 모두 자동 삭제하고 새 차수의 학생 본문만 깨끗하게 기록!
-        resetDocWithCleanStudentText_(docId, studentText);
+        resetDocWithCleanStudentText_(docId, studentText, payload.pieceTitle, name);
       } catch (e) {}
 
       const nextStatus =

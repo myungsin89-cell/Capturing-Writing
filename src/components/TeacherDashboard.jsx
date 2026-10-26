@@ -158,6 +158,7 @@ export default function TeacherDashboard({
     return {
       ...rawSt,
       status: past?.status || 'STAGE_1_WRITING',
+      pieceTitle: past?.pieceTitle || '',
       draft1: past?.draft1 || '',
       draft2: past?.draft2 || '',
       draft3: past?.draft3 || '',
@@ -165,6 +166,8 @@ export default function TeacherDashboard({
       draftHistory: past?.draftHistory || [],
       teacherNote: past?.teacherNote || '',
       feedbackItems: past?.feedbackItems || [],
+      docId: past?.docId || '',
+      docUrl: past?.docUrl || '',
       locked: Boolean(past?.locked) || Boolean(topic.classLocked)
     };
   };
@@ -196,7 +199,7 @@ export default function TeacherDashboard({
     if (!selectedStudent || !onPullFeedbackFromDoc || isPullingDoc) return;
     setIsPullingDoc(true);
     try {
-      const res = await onPullFeedbackFromDoc(selectedStudent.number);
+      const res = await onPullFeedbackFromDoc(selectedStudent.number, currentTopic?.id);
       if (res && res.ok) {
         if (res.pulledNote && res.pulledNote.trim()) {
           setFeedbackNote(translateBriskTextToKorean(res.pulledNote.trim()));
@@ -247,7 +250,7 @@ export default function TeacherDashboard({
 
     if (onEnsureStudentDoc) {
       showToast(`${st.name} 학생 구글 독스에 최신 본문을 동기화하고 있습니다...`);
-      const ensured = await onEnsureStudentDoc(st);
+      const ensured = await onEnsureStudentDoc(st, currentTopic);
       if (ensured && ensured.docId) {
         targetDocId = ensured.docId;
         targetDocUrl = ensured.docUrl;
@@ -1838,6 +1841,14 @@ export default function TeacherDashboard({
                 }}
                 className="flex-1 min-h-[420px] lined-paper p-5 sm:p-6 rounded-2xl border border-[#CBD5E1] font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] whitespace-pre-wrap leading-8 select-text cursor-text"
               >
+                <div className="mb-8">
+                  <h3 className="text-center text-xl sm:text-2xl font-bold text-[#1E293B]">
+                    {selectedStudent.pieceTitle || currentTopic.title}
+                  </h3>
+                  <div className="mt-3 text-right text-sm sm:text-base font-semibold text-[#475569]">
+                    {selectedStudent.name}
+                  </div>
+                </div>
                 {currentStudentText ? (
                   showGreenText && prevDraftPage ? (
                     renderTextWithGreenAdditions(
@@ -2274,8 +2285,13 @@ export default function TeacherDashboard({
                     className="sketch-card bg-white p-5 sm:p-6 space-y-3"
                   >
                     <div className="flex items-center justify-between gap-2 border-b border-[#E2E8F0] pb-2.5">
-                      <div className="font-bold text-base text-[#1B4332] font-editorial-serif">
-                        {tp.title}
+                      <div>
+                        <div className="font-bold text-base text-[#1B4332] font-editorial-serif">
+                          {stData?.pieceTitle || tp.title}
+                        </div>
+                        {stData?.pieceTitle && (
+                          <div className="mt-0.5 text-[11px] text-[#64748B]">주제: {tp.title}</div>
+                        )}
                       </div>
                       <span className="text-xs text-[#64748B]">
                         {tp.createdAt} · {finalTxt.length}자
@@ -2283,6 +2299,14 @@ export default function TeacherDashboard({
                     </div>
                     {finalTxt ? (
                       <div className="lined-paper p-4 rounded-xl border border-[#E2E8F0] font-editorial-serif text-base text-[#1E293B] whitespace-pre-wrap leading-8">
+                        <div className="mb-7">
+                          <div className="text-center text-lg font-bold">
+                            {stData?.pieceTitle || tp.title}
+                          </div>
+                          <div className="mt-2 text-right text-sm font-semibold text-[#475569]">
+                            {portfolioStudent.name}
+                          </div>
+                        </div>
                         {finalTxt}
                       </div>
                     ) : (

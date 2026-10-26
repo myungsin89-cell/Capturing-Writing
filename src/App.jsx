@@ -21,6 +21,7 @@ import {
   migrateLegacyDemoStorage,
   removeLegacyDemoState
 } from './utils/legacyDemoMigration';
+import { shouldAutoSaveTeacherState } from './utils/syncPolicy';
 
 const STORAGE_KEYS = {
   GAS_URL: 'sseudam_gas_url_v5',
@@ -92,6 +93,9 @@ export default function App() {
       DEFAULT_GOOGLE_CLIENT_ID
   );
   const [googleAuth, setGoogleAuth] = useState(() => {
+    // 학생 링크는 교사 화면과 같은 origin을 사용하므로 localStorage도 공유됩니다.
+    // 학생 화면에서 교사 OAuth 토큰을 재사용하면 빈 학생 상태가 시트에 저장될 수 있습니다.
+    if (isStudentUrlMode) return null;
     try {
       const saved = localStorage.getItem(STORAGE_KEYS.GOOGLE_AUTH);
       if (!saved) return null;
@@ -289,7 +293,15 @@ export default function App() {
   // 교사가 Google OAuth 로그인되어 있을 때 상태 변경 시 선생님의 자동 생성 구글 시트에 자동 저장 (디바운스)
   const syncTimeoutRef = useRef(null);
   useEffect(() => {
-    if (!googleAuth?.accessToken || !config?.spreadsheetId) return;
+    if (
+      !shouldAutoSaveTeacherState({
+        isStudentUrlMode,
+        accessToken: googleAuth?.accessToken,
+        spreadsheetId: config?.spreadsheetId
+      })
+    ) {
+      return;
+    }
     if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
 
     syncTimeoutRef.current = setTimeout(() => {
@@ -311,7 +323,15 @@ export default function App() {
     return () => {
       if (syncTimeoutRef.current) clearTimeout(syncTimeoutRef.current);
     };
-  }, [classes, topics, students, questions, config, googleAuth?.accessToken]);
+  }, [
+    classes,
+    topics,
+    students,
+    questions,
+    config,
+    googleAuth?.accessToken,
+    isStudentUrlMode
+  ]);
 
   // 교사 화면은 학생 제출 결과를 주기적으로 읽되, 더 최신인 로컬 첨삭은 덮어쓰지 않습니다.
   useEffect(() => {
@@ -634,7 +654,14 @@ export default function App() {
   }, [isStudentUrlMode, studentSession?.token, gasUrl, urlSheetId, callGasApi]);
 
   // 학생 제출 (문단 구조 100% 보존하여 저장)
-  const handleSubmitStage = async (studentNumber, stage, text, topicId) => {
+  const handleSubmitStage = async (studentNumber, stage, text, topicId, pieceTitle) => {
+    const cleanPieceTitle = String(pieceTitle || '').trim();
+    if (!cleanPieceTitle) {
+      return { ok: false, error: '작품 제목을 먼저 지어 주세요.' };
+    }
+    if (cleanPieceTitle.length > 50) {
+      return { ok: false, error: '작품 제목은 50자 이내로 작성해 주세요.' };
+    }
     const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
     const nowIso = new Date().toISOString();
     const isActive = !topicId || topicId === (config.activeTopicId || 'TOPIC_1');
@@ -654,6 +681,7 @@ export default function App() {
             ...st,
             status: nextStatus,
             locked: true,
+            pieceTitle: cleanPieceTitle,
             draft1: stage === 1 ? text : st.draft1,
             draft2: stage === 2 ? text : st.draft2,
             draft3: stage === 3 ? text : st.draft3,
@@ -672,12 +700,16 @@ export default function App() {
               ...prevTopicData,
               status: nextStatus,
               locked: true,
+              pieceTitle: cleanPieceTitle,
               draft1: stage === 1 ? text : prevTopicData.draft1,
               draft2: stage === 2 ? text : prevTopicData.draft2,
-              draft3: stage === 3 ? text : prevTopicData.draft3
-            },
-            updatedAtIso: nowIso
-          }
+              draft3: stage === 3 ? text : prevTopicData.draft3,
+              draft4: stage >= 4 ? text : prevTopicData.draft4,
+              updatedAt: `오늘 ${now}`,
+              updatedAtIso: nowIso
+            }
+          },
+          updatedAtIso: nowIso
         };
       })
     );
@@ -688,7 +720,8 @@ export default function App() {
         sessionToken: studentSession?.token || '',
         topicId,
         stage,
-        text
+        text,
+        pieceTitle: cleanPieceTitle
       });
       if (!data?.ok || !data.student) {
         return { ok: false, error: data?.error || '제출에 실패했습니다. 다시 시도해 주세요.' };
@@ -792,14 +825,19 @@ export default function App() {
     );
 
     // 교사가 [첨삭 완료 및 학생에게 전송] 시, 학생 구글 독스의 이전 Brisk 표/댓글을 자동으로 깨끗하게 청소!
-    if (status === 'FEEDBACK_DONE' && googleAuth?.accessToken && targetSt?.docId) {
+    const targetDocId = targetTopicData?.docId || targetSt?.docId;
+    if (status === 'FEEDBACK_DONE' && googleAuth?.accessToken && targetDocId) {
       const latestText =
         targetTopicData?.draft4 ||
         targetTopicData?.draft3 ||
         targetTopicData?.draft2 ||
         targetTopicData?.draft1 ||
         '';
-      resetGoogleDocWithStudentText(googleAuth.accessToken, targetSt.docId, latestText);
+      const targetTopicTitle = topics.find((topic) => topic.id === targetTopicId)?.title || '';
+      resetGoogleDocWithStudentText(googleAuth.accessToken, targetDocId, latestText, {
+        pieceTitle: targetTopicData?.pieceTitle || targetTopicTitle,
+        authorName: targetSt.name || ''
+      });
     }
 
   };
@@ -929,6 +967,7 @@ export default function App() {
             docUrl: 'https://docs.google.com/document/u/0/',
             status: 'STAGE_1_WRITING',
             locked: false,
+            pieceTitle: '',
             draft1: '',
             draft2: '',
             draft3: '',
@@ -968,6 +1007,7 @@ export default function App() {
                   ? {
                       [prevActiveId]: {
                         status: st.status,
+                        pieceTitle: st.pieceTitle || '',
                         draft1: st.draft1,
                         draft2: st.draft2,
                         draft3: st.draft3,
@@ -982,6 +1022,7 @@ export default function App() {
               },
               status: 'STAGE_1_WRITING',
               locked: false,
+              pieceTitle: '',
               draft1: '',
               draft2: '',
               draft3: '',
@@ -1155,6 +1196,7 @@ export default function App() {
             historyByTopic: nextHistory,
             status: restored.status || 'STAGE_1_WRITING',
             locked: Boolean(nextActiveTopic.classLocked),
+            pieceTitle: restored.pieceTitle || '',
             draft1: restored.draft1 || '',
             draft2: restored.draft2 || '',
             draft3: restored.draft3 || '',
@@ -1172,6 +1214,7 @@ export default function App() {
           historyByTopic: nextHistory,
           status: 'STAGE_1_WRITING',
           locked: false,
+          pieceTitle: '',
           draft1: '',
           draft2: '',
           draft3: '',
@@ -1212,23 +1255,41 @@ export default function App() {
 
   // 교사가 [1. 학생 독스 열기] 클릭 시: 아직 실제 구글 독스가 없으면 내 구글 드라이브에 자동 생성 후 최신 본문 동기화!
   const handleEnsureStudentDoc = useCallback(
-    async (student) => {
+    async (student, topic) => {
       if (!googleAuth?.accessToken || !student) return null;
       try {
         const res = await ensureAndSyncStudentGoogleDoc(googleAuth.accessToken, {
           student,
           className: config.className,
-          topicTitle: config.assignmentTitle,
+          topicTitle: topic?.title || config.assignmentTitle,
           folderId: config.driveFolderId
         });
         if (res && res.docId) {
+          const targetTopicId = topic?.id || config.activeTopicId || '';
+          const isActiveTopic = targetTopicId === (config.activeTopicId || 'TOPIC_1');
           setStudents((prev) =>
-            prev.map((st) =>
-              String(st.number) === String(student.number)
-                && belongsToActiveClass(st)
-                ? { ...st, docId: res.docId, docUrl: res.docUrl }
-                : st
-            )
+            prev.map((st) => {
+              if (
+                String(st.number) !== String(student.number) ||
+                !belongsToActiveClass(st)
+              ) {
+                return st;
+              }
+              if (isActiveTopic) {
+                return { ...st, docId: res.docId, docUrl: res.docUrl };
+              }
+              return {
+                ...st,
+                historyByTopic: {
+                  ...(st.historyByTopic || {}),
+                  [targetTopicId]: {
+                    ...(st.historyByTopic?.[targetTopicId] || {}),
+                    docId: res.docId,
+                    docUrl: res.docUrl
+                  }
+                }
+              };
+            })
           );
           return res;
         }
@@ -1237,28 +1298,44 @@ export default function App() {
       }
       return null;
     },
-    [googleAuth?.accessToken, config.className, config.assignmentTitle, config.driveFolderId]
+    [
+      googleAuth?.accessToken,
+      config.className,
+      config.assignmentTitle,
+      config.activeTopicId,
+      config.driveFolderId
+    ]
   );
 
   // [핵심] 학생 구글 독스에서 Brisk로 넣은 종합 첨삭(표/문단)과 부분 첨삭(댓글)을 앱으로 자동 가져오기!
   const handlePullFeedbackFromDoc = useCallback(
-    async (studentNumber) => {
+    async (studentNumber, topicId) => {
       const targetSt = students.find(
         (s) => belongsToActiveClass(s) && String(s.number) === String(studentNumber)
       );
+      const targetTopicId = topicId || config.activeTopicId || '';
+      const isActiveTopic = targetTopicId === (config.activeTopicId || 'TOPIC_1');
+      const targetTopicData = isActiveTopic
+        ? targetSt
+        : { ...targetSt, ...(targetSt?.historyByTopic?.[targetTopicId] || {}) };
+      const targetDocId = targetTopicData?.docId;
 
       // 1순위: 교사 Google OAuth 토큰으로 직접 내 구글 독스에서 Brisk 표/댓글 읽어오기!
       if (
         googleAuth?.accessToken &&
-        targetSt?.docId &&
-        !String(targetSt.docId).startsWith('DEMO_')
+        targetDocId &&
+        !String(targetDocId).startsWith('DEMO_')
       ) {
         try {
           const currentText =
-            targetSt.draft4 || targetSt.draft3 || targetSt.draft2 || targetSt.draft1 || '';
+            targetTopicData?.draft4 ||
+            targetTopicData?.draft3 ||
+            targetTopicData?.draft2 ||
+            targetTopicData?.draft1 ||
+            '';
           const directRes = await pullBriskFeedbackFromGoogleDoc(
             googleAuth.accessToken,
-            targetSt.docId,
+            targetDocId,
             currentText
           );
           if (directRes) {
@@ -1278,7 +1355,8 @@ export default function App() {
       if (gasUrl) {
         const res = await callGasApi({
           action: 'pullFeedbackFromDoc',
-          number: studentNumber
+          number: studentNumber,
+          topicId: targetTopicId
         });
         if (res && res.ok) {
           return {
@@ -1301,7 +1379,7 @@ export default function App() {
         pulledComments: []
       };
     },
-    [googleAuth?.accessToken, gasUrl, callGasApi, students]
+    [googleAuth?.accessToken, gasUrl, callGasApi, students, config.activeTopicId]
   );
 
   const handlePreviewAsStudent = (student) => {

@@ -14,6 +14,8 @@ import { X, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
 
 export default function GrowthDiffView({ student, topicTitle = '' }) {
   const pages = useMemo(() => getStudentDraftPages(student), [student]);
+  const pieceTitle = student?.pieceTitle || topicTitle || '제목 없음';
+  const authorName = student?.name || '';
 
   // 비교할 왼쪽(이전 차수) 페이지 인덱스와 오른쪽(이후 차수) 페이지 인덱스
   const [leftIdx, setLeftIdx] = useState(0);
@@ -60,6 +62,12 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
         </p>
         {leftPage.text && (
           <div className="mt-4 p-6 rounded-2xl lined-paper border border-[#CBD5E1] text-left font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] whitespace-pre-wrap leading-8">
+            <div className="mb-8">
+              <div className="text-center text-xl sm:text-2xl font-bold">{pieceTitle}</div>
+              <div className="mt-3 text-right text-sm sm:text-base font-semibold text-[#475569]">
+                {authorName}
+              </div>
+            </div>
             {leftPage.text}
           </div>
         )}
@@ -213,6 +221,12 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
           </div>
 
           <div className="flex-1 lined-paper p-5 sm:p-6 rounded-2xl border border-[#E2E8F0] font-editorial-serif text-lg sm:text-[19.5px] leading-8 text-[#334155] whitespace-pre-wrap">
+            <div className="mb-8">
+              <div className="text-center text-xl sm:text-2xl font-bold">{pieceTitle}</div>
+              <div className="mt-3 text-right text-sm sm:text-base font-semibold text-[#475569]">
+                {authorName}
+              </div>
+            </div>
             {renderTextWithHighlight(leftPage.text, '')}
           </div>
         </div>
@@ -237,6 +251,12 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
           </div>
 
           <div className="flex-1 lined-paper p-5 sm:p-6 rounded-2xl border border-[#B7E4C7] font-editorial-serif text-lg sm:text-[19.5px] leading-8 text-[#1E293B] whitespace-pre-wrap">
+            <div className="mb-8">
+              <div className="text-center text-xl sm:text-2xl font-bold">{pieceTitle}</div>
+              <div className="mt-3 text-right text-sm sm:text-base font-semibold text-[#475569]">
+                {authorName}
+              </div>
+            </div>
             {showGreenText
               ? renderTextWithGreenAdditions(leftPage.text, rightPage.text, '')
               : renderTextWithHighlight(rightPage.text, '')}

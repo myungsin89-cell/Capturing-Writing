@@ -53,6 +53,7 @@ export default function StudentStudio({
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
 
   const [editorText, setEditorText] = useState('');
+  const [pieceTitle, setPieceTitle] = useState('');
   const [questionInput, setQuestionInput] = useState('');
   const [toastMsg, setToastMsg] = useState('');
   const [showGreenText, setShowGreenText] = useState(false);
@@ -77,6 +78,7 @@ export default function StudentStudio({
     return {
       ...currentStudent,
       status: past?.status || 'STAGE_1_WRITING',
+      pieceTitle: past?.pieceTitle || '',
       draft1: past?.draft1 || '',
       draft2: past?.draft2 || '',
       draft3: past?.draft3 || '',
@@ -114,6 +116,7 @@ export default function StudentStudio({
     setViewingPageIdx(null);
     const pages = getStudentDraftPages(topicStudentData);
     const latest = pages.length > 0 ? pages[pages.length - 1].text : '';
+    setPieceTitle(topicStudentData.pieceTitle || '');
     setEditorText(
       latest ||
         topicStudentData.draft3 ||
@@ -121,7 +124,7 @@ export default function StudentStudio({
         topicStudentData.draft1 ||
         ''
     );
-  }, [currentStudent?.number, openedTopicId, topicStudentData?.status]);
+  }, [currentStudent?.number, openedTopicId, topicStudentData?.status, topicStudentData?.pieceTitle]);
 
   const showToast = (msg) => {
     setToastMsg(msg);
@@ -164,6 +167,10 @@ export default function StudentStudio({
   };
 
   const handleStageSubmit = async () => {
+    if (!pieceTitle.trim()) {
+      showToast('작품 제목을 먼저 지어 주세요.');
+      return;
+    }
     if (!editorText.trim()) {
       showToast('글을 먼저 작성해 주세요.');
       return;
@@ -181,7 +188,8 @@ export default function StudentStudio({
         currentStudent.number,
         nextStage,
         editorText,
-        selectedTopic.id
+        selectedTopic.id,
+        pieceTitle.trim()
       );
       showToast(
         result?.ok
@@ -570,45 +578,72 @@ export default function StudentStudio({
               안내: {selectedTopic.prompt}
             </div>
 
-            {highlightedQuote || showGreenText || viewingPageIdx !== null ? (
-              <div
-                onClick={() => {
-                  if (!isLocked) {
-                    setHighlightedQuote('');
-                    setShowGreenText(false);
-                    setViewingPageIdx(null);
-                  }
-                }}
-                className="flex-1 min-h-[460px] w-full lined-paper p-5 sm:p-6 rounded-2xl border-2 border-[#52B788] font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] whitespace-pre-wrap leading-8 cursor-text"
-              >
-                <div className="mb-3 flex items-center justify-between bg-[#F2F9F5] border border-[#B7E4C7] px-3.5 py-2 rounded-xl text-xs font-bold text-[#1B4332]">
-                  <span>
-                    {highlightedQuote
-                      ? '선생님이 첨삭해 주신 문장에 노란 형광펜이 켜졌어요!'
-                      : showGreenText
-                      ? '고치며 새로 추가한 표현이 초록색 글씨로 표시되었어요!'
-                      : `${draftPages[viewingPageIdx]?.label || '이전 차수'} 완성본을 보고 있어요.`}
-                    {!isLocked ? ' (공책을 클릭하면 바로 이어서 고쳐 쓸 수 있어요)' : ''}
-                  </span>
-                </div>
-                {showGreenText
-                  ? renderTextWithGreenAdditions(
-                      prevComparisonText,
-                      activeDisplayText,
-                      highlightedQuote
-                    )
-                  : renderTextWithHighlight(activeDisplayText, highlightedQuote)}
+            <div
+              className={`flex-1 min-h-[460px] w-full lined-paper p-5 sm:p-6 rounded-2xl border font-editorial-serif text-[#1E293B] ${
+                highlightedQuote || showGreenText || viewingPageIdx !== null
+                  ? 'border-2 border-[#52B788]'
+                  : 'border-[#CBD5E1] focus-within:border-[#1B4332]'
+              }`}
+            >
+              {!isLocked && viewingPageIdx === null && !highlightedQuote && !showGreenText ? (
+                <input
+                  type="text"
+                  value={pieceTitle}
+                  onChange={(e) => setPieceTitle(e.target.value)}
+                  maxLength={50}
+                  aria-label="작품 제목"
+                  placeholder="작품 제목을 지어 보세요"
+                  className="w-full bg-transparent border-0 border-b border-dashed border-[#94A3B8] px-2 pb-2 text-center text-xl sm:text-2xl font-bold font-editorial-serif text-[#1E293B] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#1B4332]"
+                />
+              ) : (
+                <h3 className="px-2 pb-2 text-center text-xl sm:text-2xl font-bold font-editorial-serif">
+                  {pieceTitle || topicStudentData?.pieceTitle || selectedTopic.title}
+                </h3>
+              )}
+              <div className="mt-3 mb-8 text-right text-sm sm:text-base font-semibold text-[#475569]">
+                {currentStudent.name}
               </div>
-            ) : (
-              <textarea
-                ref={textareaRef}
-                value={editorText}
-                onChange={(e) => setEditorText(e.target.value)}
-                disabled={isLocked}
-                placeholder="첫 문단을 시작할 때는 두 칸을 띄어 쓰고, 생각이 바뀌면 엔터를 두 번 눌러 문단을 나누어 써 보세요."
-                className="flex-1 min-h-[460px] w-full lined-paper p-5 sm:p-6 rounded-2xl border border-[#CBD5E1] focus:outline-none focus:border-[#1B4332] font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] resize-none leading-8 whitespace-pre-wrap disabled:opacity-75 disabled:cursor-not-allowed"
-              />
-            )}
+
+              {highlightedQuote || showGreenText || viewingPageIdx !== null ? (
+                <div
+                  onClick={() => {
+                    if (!isLocked) {
+                      setHighlightedQuote('');
+                      setShowGreenText(false);
+                      setViewingPageIdx(null);
+                    }
+                  }}
+                  className="min-h-[330px] text-lg sm:text-[19.5px] whitespace-pre-wrap leading-8 cursor-text"
+                >
+                  <div className="mb-3 flex items-center justify-between bg-[#F2F9F5] border border-[#B7E4C7] px-3.5 py-2 rounded-xl text-xs font-bold text-[#1B4332]">
+                    <span>
+                      {highlightedQuote
+                        ? '선생님이 첨삭해 주신 문장에 노란 형광펜이 켜졌어요!'
+                        : showGreenText
+                        ? '고치며 새로 추가한 표현이 초록색 글씨로 표시되었어요!'
+                        : `${draftPages[viewingPageIdx]?.label || '이전 차수'} 완성본을 보고 있어요.`}
+                      {!isLocked ? ' (공책을 클릭하면 바로 이어서 고쳐 쓸 수 있어요)' : ''}
+                    </span>
+                  </div>
+                  {showGreenText
+                    ? renderTextWithGreenAdditions(
+                        prevComparisonText,
+                        activeDisplayText,
+                        highlightedQuote
+                      )
+                    : renderTextWithHighlight(activeDisplayText, highlightedQuote)}
+                </div>
+              ) : (
+                <textarea
+                  ref={textareaRef}
+                  value={editorText}
+                  onChange={(e) => setEditorText(e.target.value)}
+                  disabled={isLocked}
+                  placeholder="첫 문단을 시작할 때는 두 칸을 띄어 쓰고, 생각이 바뀌면 엔터를 두 번 눌러 문단을 나누어 써 보세요."
+                  className="min-h-[330px] w-full bg-transparent border-0 p-0 focus:outline-none font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] resize-none leading-8 whitespace-pre-wrap disabled:opacity-75 disabled:cursor-not-allowed"
+                />
+              )}
+            </div>
           </div>
 
           <div className="mt-5 pt-4 border-t border-[#E2E8F0] flex items-center justify-between gap-4 flex-wrap">

@@ -192,15 +192,38 @@ test('학생 제출은 세션 소유 학생만 갱신한다', () => {
     sessionToken: login.sessionToken,
     topicId: 'TOPIC_A',
     stage: 1,
+    pieceTitle: '나의 특별한 하루',
     text: '내가 쓴 첫 번째 글'
   });
   assert.equal(submitted.ok, true);
+  assert.equal(submitted.student.pieceTitle, '나의 특별한 하루');
   assert.equal(submitted.student.draft1, '내가 쓴 첫 번째 글');
   assert.equal(submitted.student.locked, true);
 
   const state = context.readAppStateV2_('spreadsheet-id-1234567890').state;
+  assert.equal(state.students[0].pieceTitle, '나의 특별한 하루');
   assert.equal(state.students[0].draft1, '내가 쓴 첫 번째 글');
   assert.equal(state.students[1].draft1, '다른 학생 글');
+});
+
+test('작품 제목이 없는 학생 글은 제출하지 않는다', () => {
+  const { context } = makeHarness();
+  const login = context.studentLoginV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    classId: 'CLASS_A',
+    accessKey: 'class-secret',
+    number: '1',
+    name: '가학생'
+  });
+  const submitted = context.submitStageV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    sessionToken: login.sessionToken,
+    topicId: 'TOPIC_A',
+    stage: 1,
+    text: '제목 없이 쓴 글'
+  });
+  assert.equal(submitted.ok, false);
+  assert.match(submitted.error, /작품 제목/);
 });
 
 test('학생 질문은 세션의 학급·번호·이름으로 저장된다', () => {
