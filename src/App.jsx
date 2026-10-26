@@ -6,6 +6,7 @@ import GasSetupModal from './components/GasSetupModal';
 import {
   DEFAULT_GOOGLE_CLIENT_ID,
   loginTeacherWithGoogle,
+  refreshTeacherGoogleToken,
   ensureTeacherSpreadsheet,
   deployStudentRelayWebApp,
   loadFullStateFromSpreadsheet,
@@ -473,6 +474,71 @@ export default function App() {
     };
   }, [isStudentUrlMode, googleAuth?.accessToken, config?.spreadsheetId, legacyClassId]);
 
+  // 교사 화면 켜짐 및 활동 시 구글 토큰 자동 연장 (1시간 만료 방지)
+  const isRefreshingAuthRef = useRef(false);
+  const handleAutoRefreshToken = useCallback(
+    async (forced = false) => {
+      if (isStudentUrlMode || !googleAuth?.accessToken || isRefreshingAuthRef.current) return;
+      const targetClientId = (googleClientId || '').trim();
+      if (!targetClientId) return;
+
+      const remainingMs = (googleAuth.expiresAt || 0) - Date.now();
+      // 만료 15분 전이거나 강제 갱신 요청일 때 백그라운드 갱신
+      if (!forced && remainingMs > 15 * 60 * 1000) return;
+
+      isRefreshingAuthRef.current = true;
+      try {
+        const refreshed = await refreshTeacherGoogleToken(targetClientId, googleAuth);
+        if (refreshed?.accessToken) {
+          setGoogleAuth(refreshed);
+          localStorage.setItem(STORAGE_KEYS.GOOGLE_AUTH, JSON.stringify(refreshed));
+
+          // 학생 제출용 브릿지 토큰을 구글 시트에도 즉시 동기화
+          if (config?.spreadsheetId) {
+            saveFullStateToSpreadsheet(refreshed.accessToken, config.spreadsheetId, {
+              classes,
+              topics,
+              students,
+              questions,
+              config,
+              replaceRemoteRecords: false
+            }).catch((err) => console.warn('교사 토큰 자동 갱신 시트 반영 참고:', err));
+          }
+        }
+      } catch (err) {
+        console.warn('구글 세션 백그라운드 연장 참고:', err);
+      } finally {
+        isRefreshingAuthRef.current = false;
+      }
+    },
+    [isStudentUrlMode, googleAuth, googleClientId, config, classes, topics, students, questions]
+  );
+
+  useEffect(() => {
+    if (isStudentUrlMode || !googleAuth?.accessToken) return;
+
+    // 1) 3분마다 토큰 만료 잔여 시간 점검
+    const intervalTimer = setInterval(() => {
+      handleAutoRefreshToken(false);
+    }, 3 * 60 * 1000);
+
+    // 2) 교사가 탭을 다시 보거나(창 전환) 화면 클릭 시 점검
+    const handleActivity = () => {
+      handleAutoRefreshToken(false);
+    };
+
+    window.addEventListener('focus', handleActivity);
+    window.addEventListener('visibilitychange', handleActivity);
+    window.addEventListener('click', handleActivity);
+
+    return () => {
+      clearInterval(intervalTimer);
+      window.removeEventListener('focus', handleActivity);
+      window.removeEventListener('visibilitychange', handleActivity);
+      window.removeEventListener('click', handleActivity);
+    };
+  }, [isStudentUrlMode, googleAuth?.accessToken, handleAutoRefreshToken]);
+
   // 교사 Google OAuth 원클릭 로그인 + 내 구글 드라이브에 구글 시트 & 폴더 자동 생성!
   const handleTeacherGoogleLogin = async (customClientId) => {
     const targetClientId = (customClientId ?? googleClientId ?? '').trim();
@@ -741,7 +807,9 @@ export default function App() {
         setStudents([]);
         setQuestions([]);
       }
-      if (!cancelled) timer = setTimeout(refresh, 15000);
+      // 직결 모드(gasUrl 미등록)일 때는 시트 API 분당 60회 쿼터를 아끼기 위해 50초, 중계기(GAS)일 때는 25초 간격으로 조회
+      const pollInterval = gasUrl ? 25000 : 50000;
+      if (!cancelled) timer = setTimeout(refresh, pollInterval);
     };
     refresh();
     return () => {
@@ -790,7 +858,7 @@ export default function App() {
     );
 
     if (isStudentUrlMode) {
-      const data = await callGasApi({
+      let data = await callGasApi({
         action: 'submitStage',
         sessionToken: studentSession?.token || '',
         topicId,
@@ -798,6 +866,27 @@ export default function App() {
         text,
         pieceTitle: cleanPieceTitle
       });
+
+      // 동시 제출 요청 몰림(429 또는 락 대기) 시 2초 대기 후 1회 자동 재시도
+      if (
+        !data?.ok &&
+        data?.error &&
+        (data.error.includes('동시에') ||
+          data.error.includes('많습니다') ||
+          data.error.includes('429') ||
+          data.error.includes('한도'))
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        data = await callGasApi({
+          action: 'submitStage',
+          sessionToken: studentSession?.token || '',
+          topicId,
+          stage,
+          text,
+          pieceTitle: cleanPieceTitle
+        });
+      }
+
       if (!data?.ok || !data.student) {
         return { ok: false, error: data?.error || '제출에 실패했습니다. 다시 시도해 주세요.' };
       }

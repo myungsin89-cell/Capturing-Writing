@@ -56,7 +56,8 @@ export function loadGoogleIdentityScript() {
 /**
  * 교사 Google OAuth 팝업 로그인 및 Access Token 발급
  */
-export async function loginTeacherWithGoogle(clientId) {
+export async function loginTeacherWithGoogle(clientId, options = {}) {
+  const prompt = options.prompt !== undefined ? options.prompt : 'select_account';
   const cleanClientId = (
     clientId ||
     import.meta.env.VITE_GOOGLE_CLIENT_ID ||
@@ -79,6 +80,7 @@ export async function loginTeacherWithGoogle(clientId) {
             return;
           }
           const accessToken = tokenResponse.access_token;
+          const expiresInSec = Number(tokenResponse.expires_in || 3500);
           try {
             const profileRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
               headers: { Authorization: `Bearer ${accessToken}` }
@@ -86,27 +88,37 @@ export async function loginTeacherWithGoogle(clientId) {
             const profile = profileRes.ok ? await profileRes.json() : {};
             resolve({
               accessToken,
-              expiresAt: Date.now() + (Number(tokenResponse.expires_in || 3500) * 1000),
+              expiresAt: Date.now() + expiresInSec * 1000,
               user: {
-                name: profile.name || '선생님',
-                email: profile.email || '',
-                picture: profile.picture || ''
+                name: profile.name || options.existingUser?.name || '선생님',
+                email: profile.email || options.existingUser?.email || '',
+                picture: profile.picture || options.existingUser?.picture || ''
               }
             });
           } catch {
             resolve({
               accessToken,
-              expiresAt: Date.now() + 3500 * 1000,
-              user: { name: '선생님', email: '' }
+              expiresAt: Date.now() + expiresInSec * 1000,
+              user: options.existingUser || { name: '선생님', email: '' }
             });
           }
         }
       });
 
-      tokenClient.requestAccessToken({ prompt: 'select_account' });
+      tokenClient.requestAccessToken({ prompt });
     } catch (err) {
       reject(err);
     }
+  });
+}
+
+/**
+ * 교사 화면 활성화 중 백그라운드에서 토큰을 자동 갱신 (팝업 없이 세션 연장)
+ */
+export async function refreshTeacherGoogleToken(clientId, existingAuth) {
+  return loginTeacherWithGoogle(clientId, {
+    prompt: '',
+    existingUser: existingAuth?.user
   });
 }
 
@@ -121,7 +133,21 @@ async function googleFetch(url, accessToken, options = {}) {
   });
   if (!res.ok) {
     const errText = await res.text();
-    throw new Error(`Google API 오류 (${res.status}): ${errText}`);
+    let friendlyMessage = '';
+    if (res.status === 429) {
+      friendlyMessage = 'Google API 요청 한도 초과 (429): 동시 요청이 많습니다. 잠시 후 다시 시도해 주세요.';
+    } else if (res.status === 401) {
+      friendlyMessage = 'Google 인증 만료 (401): 선생님의 연결 권한이 만료되었습니다. 화면을 새로고침해 주세요.';
+    } else if (res.status === 403) {
+      friendlyMessage = 'Google 권한 오류 (403): 구글 드라이브 또는 시트 접근 권한을 확인해 주세요.';
+    }
+    const fullMessage = friendlyMessage
+      ? `${friendlyMessage} (${errText})`
+      : `Google API 오류 (${res.status}): ${errText}`;
+    const error = new Error(fullMessage);
+    error.status = res.status;
+    error.rawText = errText;
+    throw error;
   }
   if (res.status === 204) return null;
   return res.json();
@@ -1379,9 +1405,15 @@ export async function callDirectSheetStudentApi(payload = {}) {
 
     return { ok: false, error: '지원하지 않는 요청입니다.' };
   } catch (err) {
+    let userMsg = err?.message || '학생 데이터를 불러오는 중 문제가 발생했습니다.';
+    if (err?.status === 429 || /429|요청 한도|quota|Too Many Requests/i.test(userMsg)) {
+      userMsg = '친구들이 동시에 제출하고 있어요! 5~10초 뒤 다시 [제출하기]를 눌러주세요.';
+    } else if (err?.status === 401 || /401|인증 만료|invalid authentication|credentials|만료/i.test(userMsg)) {
+      userMsg = '선생님의 연결 권한이 만료되었습니다. 선생님께 쓰담 화면을 새로고침(F5)해 달라고 말씀해 주세요.';
+    }
     return {
       ok: false,
-      error: err?.message || '학생 데이터를 불러오는 중 문제가 발생했습니다.'
+      error: userMsg
     };
   }
 }
