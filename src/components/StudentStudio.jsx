@@ -95,6 +95,9 @@ export default function StudentStudio({
   const selectedTopic = topics.find((t) => t.id === openedTopicId) || null;
   const topicStudentData = getStudentDataForTopic(selectedTopic);
   const draftPages = getStudentDraftPages(topicStudentData);
+  const displayPieceTitle = String(
+    pieceTitle || topicStudentData?.pieceTitle || ''
+  ).trim();
 
   const myQuestions = questions.filter(
     (q) =>
@@ -606,12 +609,18 @@ export default function StudentStudio({
                   onChange={(e) => setPieceTitle(e.target.value)}
                   maxLength={50}
                   aria-label="작품 제목"
-                  placeholder="작품 제목을 지어 보세요"
-                  className="w-full bg-transparent border-0 border-b border-dashed border-[#94A3B8] px-2 pb-2 text-center text-xl sm:text-2xl font-bold font-editorial-serif text-[#1E293B] placeholder:text-[#94A3B8] focus:outline-none focus:border-[#1B4332]"
+                  placeholder="제목을 써주세요"
+                  className="w-full bg-transparent border-0 border-b border-dashed border-[#94A3B8] px-2 pb-2 text-center text-xl sm:text-2xl font-bold font-editorial-serif text-[#1E293B] placeholder:text-[#94A3B8]/70 placeholder:font-normal focus:outline-none focus:border-[#1B4332]"
                 />
               ) : (
-                <h3 className="px-2 pb-2 text-center text-xl sm:text-2xl font-bold font-editorial-serif">
-                  {pieceTitle || topicStudentData?.pieceTitle || selectedTopic.title}
+                <h3
+                  className={`px-2 pb-2 text-center text-xl sm:text-2xl font-editorial-serif ${
+                    displayPieceTitle
+                      ? 'font-bold text-[#1E293B]'
+                      : 'font-normal text-[#94A3B8]/70'
+                  }`}
+                >
+                  {displayPieceTitle || '제목을 써주세요'}
                 </h3>
               )}
               <div className="mt-3 mb-8 pr-[10%] text-right text-lg sm:text-[19.5px] leading-8 font-semibold text-[#475569]">
