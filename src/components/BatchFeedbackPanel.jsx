@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Copy, ExternalLink, FolderPlus, RefreshCw } from 'lucide-react';
+import { Check, Copy, ExternalLink, RefreshCw } from 'lucide-react';
 import { prepareFeedbackBatchInDrive, pullBriskFeedbackFromGoogleDoc } from '../services/googleDriveService';
 import {
   buildFeedbackPrompt, getFeedbackTopicRecord, getSubmissionSnapshot, hasFeedbackContent,
@@ -9,7 +9,7 @@ import {
 const buttonClass = 'sketch-btn-secondary min-h-11 px-4 py-2 text-sm font-bold inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed';
 const fieldClass = 'w-full rounded-xl border border-[#CBD5E1] bg-white p-3 text-base leading-relaxed focus:outline-2 focus:outline-[#2D6A4F]';
 
-export default function BatchFeedbackPanel({ topic, students, config, googleAuth, onSendFeedback }) {
+export function BatchFeedbackWorkspace({ topic, students, config, googleAuth, onSendFeedback, selectedStudentNumber, onSelectStudent, children }) {
   const storageKey = `sseudam_feedback_batches_v1:${googleAuth?.user?.email || config.spreadsheetId || 'local'}:${config.activeClassId}:${topic.id}`;
   const [workspace, setWorkspace] = useState(() => {
     try {
@@ -23,7 +23,6 @@ export default function BatchFeedbackPanel({ topic, students, config, googleAuth
   const busyRef = useRef(false);
   const [selectedNumbers, setSelectedNumbers] = useState(null);
   const [activeBatchId, setActiveBatchId] = useState(workspace[0]?.id || '');
-  const [activeEntryId, setActiveEntryId] = useState('');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -71,7 +70,7 @@ export default function BatchFeedbackPanel({ topic, students, config, googleAuth
     .filter((record) => !workspace.some((batch) => batch.entries.some((entry) => !entry.sentAt && isMatchingSubmission(record, entry))));
   const chosen = candidates.filter((record) => selectedNumbers === null || selectedNumbers.includes(String(record.number)));
   const activeBatch = workspace.find((batch) => batch.id === activeBatchId);
-  const activeEntry = activeBatch?.entries.find((entry) => entry.id === activeEntryId) || activeBatch?.entries[0];
+  const activeEntry = activeBatch?.entries.find((entry) => String(entry.number) === String(selectedStudentNumber));
   const criteriaChanged = activeBatch && activeBatch.prompt !== buildFeedbackPrompt(topic, topic.feedbackCriteria);
 
   const run = async (label, action) => {
@@ -99,7 +98,7 @@ export default function BatchFeedbackPanel({ topic, students, config, googleAuth
         note: '', comments: [], reviewed: false
       }))
     };
-    saveBatch(batch); setActiveBatchId(batch.id); setActiveEntryId(batch.entries[0]?.id || '');
+    saveBatch(batch); setActiveBatchId(batch.id); onSelectStudent(batch.entries[0]?.number || selectedStudentNumber);
     const result = await prepareFeedbackBatchInDrive(googleAuth.accessToken, batch, saveBatch);
     const ready = result.entries.filter((entry) => entry.prepared).length;
     setSelectedNumbers(null);
@@ -142,41 +141,64 @@ export default function BatchFeedbackPanel({ topic, students, config, googleAuth
     }
     setMessage(`${sent}명에게 피드백을 전송했습니다.${failed ? ` ${failed}명은 전송하지 못했습니다. 학생별 안내를 확인해 주세요.` : ' 학생은 공책에서 조언을 읽고 고쳐 쓸 수 있습니다.'}`);
     const next = workspaceRef.current.find((item) => item.id === batchId)?.entries.find((entry) => !entry.sentAt);
-    if (next) setActiveEntryId(next.id);
+    if (next) onSelectStudent(next.number);
   });
 
   const editActive = (changes) => updateEntry(activeBatch.id, activeEntry.id, { ...changes, reviewed: false, sendError: '' });
   const activeStale = activeEntry && !activeEntry.sentAt && !isMatchingSubmission(recordFor(activeEntry.number), activeEntry);
   const reviewedEntries = activeBatch?.entries.filter((entry) => entry.reviewed && !entry.sentAt && hasFeedbackContent(entry) && isMatchingSubmission(recordFor(entry.number), entry)) || [];
 
+  const entryStatus = (entry) => {
+    if (!entry) return '';
+    if (entry.sentAt) return '전송 완료';
+    if (!isMatchingSubmission(recordFor(entry.number), entry)) return '제출 변경 · 전송 불가';
+    if (entry.error) return '문서 준비 오류';
+    if (!entry.prepared) return '문서 준비 대기';
+    if (entry.reviewed) return '교사 확인 완료';
+    return hasFeedbackContent(entry) ? '교사 확인 대기' : 'Brisk 첨삭 대기';
+  };
+  const selectionFor = (number) => {
+    const eligible = candidates.some((record) => String(record.number) === String(number));
+    const entry = activeBatch?.entries.find((item) => String(item.number) === String(number));
+    const inProgress = workspace.flatMap((batch) => batch.entries).find((item) => String(item.number) === String(number) && !item.sentAt && isMatchingSubmission(recordFor(number), item));
+    return {
+      eligible, checked: eligible && (selectedNumbers === null || selectedNumbers.includes(String(number))),
+      status: entryStatus(entry || inProgress), inActiveBatch: Boolean(entry)
+    };
+  };
+  const toggleCandidate = (number, checked) => {
+    const numbers = selectedNumbers || candidates.map((record) => String(record.number));
+    setSelectedNumbers(checked ? [...new Set([...numbers, String(number)])] : numbers.filter((item) => item !== String(number)));
+  };
+  const selectedRecord = recordFor(selectedStudentNumber);
+  return children({
+    topic, googleAuth, workspace, activeBatch, activeEntry, activeStale, criteriaChanged, candidates, chosen,
+    busy, message, error, storageError, copyFallback, reviewedEntries, selectedRecord,
+    selectionFor, toggleCandidate, selectWaiting: () => setSelectedNumbers(null), clearSelection: () => setSelectedNumbers([]),
+    prepare, importFeedback, sendEntries, editActive, updateEntry, copyText,
+    selectBatch: (id) => { setActiveBatchId(id); const batch = workspaceRef.current.find((item) => item.id === id); if (batch?.entries[0]) onSelectStudent(batch.entries[0].number); }
+  });
+}
+
+export default function BatchFeedbackPanel({ model }) {
+  const { topic, workspace, activeBatch, activeEntry, activeStale, criteriaChanged, chosen, selectedRecord,
+    busy, message, error, storageError, copyFallback, reviewedEntries,
+    prepare, importFeedback, sendEntries, editActive, updateEntry, copyText, selectBatch } = model;
+
   return (
     <section className="sketch-card bg-white p-4 sm:p-5" aria-label="묶음 피드백">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div><h2 className="font-bold text-[#1B4332]">제출한 학생 묶어서 피드백</h2><p className="text-sm text-[#64748B]">새로 준비할 학생 {candidates.length}명</p></div>
+        <div><h2 className="font-bold text-[#1B4332]">묶음 피드백</h2><p className="text-sm text-[#64748B]">왼쪽 명단에서 대상을 선택하고 준비해 주세요.</p></div>
         <button type="button" className={buttonClass} onClick={() => copyText(activeBatch?.prompt || buildFeedbackPrompt(topic, topic.feedbackCriteria))}><Copy aria-hidden="true" className="w-4 h-4" />기준 복사</button>
       </div>
       <div className="mt-4 space-y-5">
         <details className="text-sm text-[#475569]"><summary className="cursor-pointer py-1 font-bold">처음 사용하나요? 사용 순서 보기</summary><p className="mt-2">폴더 준비 → Brisk에서 기준을 붙여 넣고 묶음 첨삭 생성·문서에 삽입 → 첨삭 가져오기 → 확인·전송. 다른 학생은 계속 작성할 수 있습니다.</p></details>
 
-        <details className="rounded-2xl border border-[#CBD5E1] p-4" open={candidates.length > 0 || !workspace.length}>
-          <summary className="cursor-pointer py-1 font-bold text-[#1B4332]">새 묶음 준비 · {chosen.length}명 선택</summary>
-          <div className="mt-3 space-y-3">
-          <div className="flex flex-wrap items-center justify-end gap-2">
-            <div className="flex gap-2"><button type="button" className="min-h-11 px-2 text-sm underline cursor-pointer" disabled={Boolean(busy)} onClick={() => setSelectedNumbers(null)}>전체 선택</button><button type="button" className="min-h-11 px-2 text-sm underline cursor-pointer" disabled={Boolean(busy)} onClick={() => setSelectedNumbers([])}>선택 해제</button></div>
-          </div>
-          {candidates.length ? <div className="flex flex-wrap gap-2">{candidates.map((record) => <label key={record.number} className="min-h-11 px-3 py-2 flex items-center gap-2 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-sm cursor-pointer">
-            <input type="checkbox" className="w-4 h-4 accent-[#1B4332]" disabled={Boolean(busy)} checked={selectedNumbers === null || selectedNumbers.includes(String(record.number))} onChange={(event) => {
-              const numbers = selectedNumbers || candidates.map((item) => String(item.number));
-              setSelectedNumbers(event.target.checked ? [...numbers, String(record.number)] : numbers.filter((number) => number !== String(record.number)));
-            }} />{record.number}번 {record.name} · {getSubmissionSnapshot(record).round}차
-          </label>)}</div> : <p className="text-sm text-[#64748B]">새로 묶을 제출본이 없습니다. 이미 준비한 학생은 아래 작업 기록에서 이어갈 수 있습니다.</p>}
-          <button type="button" className="sketch-btn-primary min-h-11 px-4 py-2 text-sm font-bold inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled={Boolean(busy) || !chosen.length || !googleAuth?.accessToken} onClick={() => prepare()}><FolderPlus aria-hidden="true" className="w-4 h-4" />선택한 {chosen.length}명 폴더 준비</button>
-          {!googleAuth?.accessToken && <p className="text-sm text-[#92400E]">구글 로그인 후 폴더를 준비할 수 있습니다.</p>}
-          </div>
-        </details>
+        <ol className="flex flex-wrap gap-2 text-xs font-bold text-[#475569]" aria-label="묶음 작업 순서"><li className="rounded-lg bg-[#F2F9F5] px-3 py-2">1. 명단 선택 · 폴더 준비</li><li className="rounded-lg bg-[#F8FAFC] px-3 py-2">2. Brisk 첨삭</li><li className="rounded-lg bg-[#F8FAFC] px-3 py-2">3. 확인 · 전송</li></ol>
+        {!activeBatch && <div className="rounded-xl border border-[#D8F3DC] bg-[#F2F9F5] p-4 text-sm text-[#475569]">{chosen.length}명을 선택했습니다. 명단 아래 ‘묶음 준비’를 누르면 제출본을 별도 폴더에 준비합니다.</div>}
 
         {workspace.length > 0 && <div className="space-y-4">
-          {workspace.length > 1 && <details className="text-sm"><summary className="cursor-pointer py-2 font-bold text-[#475569]">다른 묶음 선택 · 작업 기록 {workspace.length}개</summary><label className="block text-sm font-bold">준비한 묶음 이어하기<select className={`${fieldClass} mt-1`} value={activeBatchId} disabled={Boolean(busy)} onChange={(event) => { setActiveBatchId(event.target.value); setActiveEntryId(''); }}>
+          {workspace.length > 1 && <details className="text-sm"><summary className="cursor-pointer py-2 font-bold text-[#475569]">다른 묶음 선택 · 작업 기록 {workspace.length}개</summary><label className="block text-sm font-bold">준비한 묶음 이어하기<select className={`${fieldClass} mt-1`} value={activeBatch?.id || ''} disabled={Boolean(busy)} onChange={(event) => selectBatch(event.target.value)}>
             {workspace.map((batch) => <option key={batch.id} value={batch.id}>{batch.label} · {batch.entries.length}명 · 전송 {batch.entries.filter((entry) => entry.sentAt).length}명</option>)}
           </select></label></details>}
           {activeBatch && <>
@@ -188,12 +210,7 @@ export default function BatchFeedbackPanel({ topic, students, config, googleAuth
               {activeBatch.entries.some((entry) => !entry.prepared) && <button type="button" className={buttonClass} disabled={Boolean(busy)} onClick={() => prepare(activeBatch)}>준비 실패·중단 문서 다시 준비</button>}
               <button type="button" className={buttonClass} disabled={Boolean(busy) || !activeBatch.entries.some((entry) => entry.prepared && !entry.sentAt)} onClick={importFeedback}><RefreshCw aria-hidden="true" className="w-4 h-4" />묶음 첨삭 가져오기</button>
             </div>
-            <div className="grid lg:grid-cols-[240px_minmax(0,1fr)] gap-4">
-              <div className="flex flex-col gap-2" aria-label="묶음 학생 목록">{activeBatch.entries.map((entry) => {
-                const stale = !entry.sentAt && !isMatchingSubmission(recordFor(entry.number), entry);
-                const status = entry.sentAt ? '전송 완료' : stale ? '제출 변경 · 전송 불가' : entry.error ? '문서 준비 오류' : !entry.prepared ? '문서 준비 대기' : entry.reviewed ? '교사 확인 완료' : hasFeedbackContent(entry) ? '교사 확인 대기' : 'Brisk 첨삭 대기';
-                return <button type="button" key={entry.id} disabled={Boolean(busy)} aria-pressed={entry.id === activeEntry?.id} onClick={() => setActiveEntryId(entry.id)} className={`min-h-16 p-3 text-left rounded-xl border cursor-pointer ${entry.id === activeEntry?.id ? 'border-[#1B4332] bg-[#F2F9F5]' : 'border-[#CBD5E1] bg-white'}`}><span className="block font-bold">{entry.number}번 {entry.name} · {entry.round}차</span><span className="block text-sm text-[#475569]">{status}</span></button>;
-              })}</div>
+            <div>
               {activeEntry && <div className="min-w-0 rounded-2xl border border-[#CBD5E1] p-4 space-y-4">
                 <div className="flex flex-wrap gap-2 items-center justify-between"><h3 className="font-bold text-[#1B4332]">{activeEntry.name} · {activeEntry.pieceTitle || '제목 없음'}</h3>{activeEntry.docUrl && <a href={activeEntry.docUrl} target="_blank" rel="noopener noreferrer" className="text-sm underline min-h-11 flex items-center">이 제출본 독스 열기</a>}</div>
                 <details open><summary className="cursor-pointer font-bold text-sm py-2">피드백 대상 · {activeEntry.round}차 제출본</summary><div className="max-h-80 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-[#FBFBF9] border border-[#E2E8F0] p-4 text-base leading-8">{activeEntry.text}</div></details>
@@ -215,6 +232,7 @@ export default function BatchFeedbackPanel({ topic, students, config, googleAuth
             </div>
           </>}
         </div>}
+        {!activeEntry && selectedRecord && <div className="rounded-2xl border border-[#CBD5E1] p-4 space-y-3" aria-label="선택한 학생 글 미리보기"><h3 className="font-bold text-[#1B4332]">{selectedRecord.name} · {getSubmissionSnapshot(selectedRecord).pieceTitle || '제목 없음'}</h3><p className="text-sm text-[#64748B]">{activeBatch ? '현재 묶음에 포함되지 않은 학생입니다.' : '선택한 학생의 최신 글입니다.'}</p><div className="max-h-96 overflow-y-auto whitespace-pre-wrap leading-8">{getSubmissionSnapshot(selectedRecord).text || '아직 제출한 글이 없습니다.'}</div></div>}
         {busy && <p role="status" className="text-sm font-bold text-[#1B4332]">{busy}… 창을 열어 둔 채 기다려 주세요.</p>}
         {message && <p role="status" className="text-sm font-bold text-[#1B4332] whitespace-pre-wrap">{message}</p>}
         {error && <p role="alert" className="text-sm text-[#B91C1C] whitespace-pre-wrap break-words">{error}</p>}

@@ -28,6 +28,8 @@ async function main() {
   const files = [];
   const docs = new Map();
   const feedbackDocs = new Set();
+  const feedbackTextByDoc = new Map();
+  let originalReadGate = null;
   const originalDocRequests = [];
   let failSecondDoc = true;
   await context.route('https://**/*', async (route) => {
@@ -79,16 +81,19 @@ async function main() {
         docs.set(id, docs.get(id) + (body.requests.find((item) => item.insertText)?.insertText.text || ''));
         return reply({});
       }
+      if (id.startsWith('ORIGINAL_') && originalReadGate) await originalReadGate;
       const content = (docs.get(id) || '\n').split('\n').map((text) => ({ paragraph: { elements: [{ textRun: { content: text + '\n' } }] } }));
       if (feedbackDocs.has(id)) content.unshift({ table: { tableRows: [
         { tableCells: ['GLOW', 'GROW'].map((text) => ({ content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }] })) },
-        { tableCells: ['장면을 순서대로 잘 썼어요.', '어떤 소리가 들렸는지 덧붙여 볼까요?'].map((text) => ({ content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }] })) }
+        { tableCells: [feedbackTextByDoc.get(id) || '장면을 순서대로 잘 썼어요.', '어떤 소리가 들렸는지 덧붙여 볼까요?'].map((text) => ({ content: [{ paragraph: { elements: [{ textRun: { content: text } }] } }] })) }
       ] } });
       return reply({ body: { content } });
     }
     return route.abort();
   });
   await context.addInitScript(({ seed }) => {
+    const qaRealNow = Date.now.bind(Date);
+    Date.now = () => qaRealNow() + (window.qaTimeOffset || 0);
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
       writeText: async (text) => {
         if (window.qaDenyClipboard) throw new Error('clipboard denied for verification');
@@ -109,12 +114,19 @@ async function main() {
   const openBatch = () => page.getByRole('tab', { name: /묶음 피드백/ }).click();
   const openIndividual = () => page.getByRole('tab', { name: '개인 피드백', exact: true }).click();
   const panel = page.getByRole('region', { name: '묶음 피드백', exact: true });
+  const roster = page.getByRole('region', { name: '우리 반 학생 명단', exact: true });
   const individualPanel = page.locator('#feedback-panel-individual');
   const modal = page.getByRole('dialog', { name: '피드백 기준', exact: true });
   try {
     await page.goto(process.env.APP_URL || 'http://127.0.0.1:5173');
     await openWorkspace();
     assert.equal(await individualPanel.isVisible(), true);
+    assert.equal(await roster.getByRole('tablist').count(), 1);
+    assert.equal(await page.getByRole('tablist').count(), 1);
+    const topHeights = await Promise.all(['학생 링크 · QR 안내', '피드백 기준', '이 주제 전체 마감'].map(async (name) => (await page.getByRole('button', { name, exact: true }).boundingBox()).height));
+    assert.ok(topHeights.every((height) => height === topHeights[0]));
+    assert.equal(await individualPanel.getByRole('button', { name: '첨삭 가져오기', exact: true }).count(), 0);
+    assert.equal(await individualPanel.getByRole('button', { name: '다시 확인', exact: true }).count(), 0);
     assert.equal(await page.locator('#feedback-panel-batch').isVisible(), false);
     await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).fill('개인 첨삭 작성 중인 조언');
     await page.getByRole('tab', { name: '개인 피드백', exact: true }).focus();
@@ -153,12 +165,14 @@ async function main() {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: path.join(process.env.BATCH_FEEDBACK_QA_DIR || root, 'feedback-individual-clean.png'), fullPage: true });
     await openBatch();
-    const candidateTwo = panel.getByRole('checkbox', { name: /2번 나학생/ });
+    const candidateTwo = roster.getByRole('checkbox', { name: /2번 나학생/ });
+    assert.equal(await roster.getByRole('checkbox', { name: /3번 다학생/ }).isDisabled(), true);
+    assert.equal(await panel.getByRole('checkbox', { name: /묶음 대상 선택/ }).count(), 0);
     await candidateTwo.uncheck();
     await openIndividual(); await openBatch();
     assert.equal(await candidateTwo.isChecked(), false);
     await candidateTwo.check();
-    await page.getByRole('button', { name: '선택한 2명 폴더 준비' }).click();
+    await page.getByRole('button', { name: '선택한 2명 묶음 준비' }).click();
     await page.getByText('2명 중 1명의 제출본을 준비했습니다.', { exact: false }).waitFor();
     await page.getByRole('button', { name: '준비 실패·중단 문서 다시 준비' }).click();
     await page.getByText('2명 중 2명의 제출본을 준비했습니다.', { exact: false }).waitFor();
@@ -174,10 +188,13 @@ async function main() {
     await panel.getByRole('button', { name: '기준 복사', exact: true }).click();
     assert.equal(await page.evaluate(() => window.qaCopiedFeedback), personalPrompt);
     await openIndividual();
+    await roster.getByRole('button').filter({ hasText: '나학생' }).click();
+    await page.waitForFunction(() => document.getElementById('individual-feedback-note')?.value === '나학생에게 쓰는 중인 개인 조언');
     assert.equal(await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).inputValue(), '나학생에게 쓰는 중인 개인 조언');
     await page.getByRole('button', { name: '기준 복사', exact: true }).click();
     assert.match(await page.evaluate(() => window.qaCopiedFeedback), /다음 단계의 새 목표/);
     await openBatch();
+    await roster.getByRole('button').filter({ hasText: '가학생' }).click();
     assert.equal(originalDocRequests.length, 0);
     await page.evaluate(() => window.scrollTo(0, 0));
     assert.equal(state.students[2].status, 'STAGE_1_WRITING');
@@ -203,7 +220,7 @@ async function main() {
     assert.match(await page.getByLabel('학생에게 보낼 종합 조언', { exact: true }).inputValue(), /교사가 보완한/);
     await page.getByRole('checkbox', { name: /학생의 제출본과 조언을 읽고 확인했습니다/ }).check();
     await page.getByRole('button', { name: '이 학생에게 보내고 다음 학생', exact: true }).click();
-    await panel.getByRole('button', { name: /1번 가학생.*전송 완료/ }).waitFor();
+    await roster.getByRole('button').filter({ hasText: '가학생' }).filter({ hasText: '전송 완료' }).waitFor();
     assert.equal(state.students[0].status, 'FEEDBACK_DONE');
     assert.equal(state.students[0].locked, false);
     assert.match(state.students[0].teacherNote, /교사가 보완한/);
@@ -242,21 +259,79 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 1050 });
     await page.reload(); await openWorkspace();
     await openBatch();
-    await page.getByRole('button', { name: '선택한 2명 폴더 준비' }).click();
+    await page.getByRole('button', { name: '선택한 2명 묶음 준비' }).click();
     await page.getByText('2명 중 2명의 제출본을 준비했습니다.', { exact: false }).waitFor();
     for (const file of files.filter((item) => item.mimeType.endsWith('document'))) feedbackDocs.add(file.id);
     await page.getByRole('button', { name: '묶음 첨삭 가져오기' }).click();
     await page.getByText('가져옴 2명', { exact: false }).waitFor();
     await page.getByRole('checkbox', { name: /학생의 제출본과 조언을 읽고 확인했습니다/ }).check();
-    await panel.getByRole('button', { name: /2번 나학생/ }).click();
+    await roster.getByRole('button').filter({ hasText: '나학생' }).click();
     await page.getByRole('checkbox', { name: /학생의 제출본과 조언을 읽고 확인했습니다/ }).check();
     await page.getByRole('button', { name: '교사가 확인한 2명 함께 전송' }).click();
     await page.getByText('2명에게 피드백을 전송했습니다.', { exact: false }).waitFor();
     assert.equal(state.students[0].status, 'FEEDBACK_DONE');
     assert.equal(state.students[1].status, 'FEEDBACK_DONE');
     assert.equal(state.students[2].status, 'STAGE_1_WRITING');
+    // A fresh personal-feedback session verifies focus-driven import and edit protection.
+    state = structuredClone(seed); files.length = 0; docs.clear(); feedbackDocs.clear();
+    await page.evaluate(() => localStorage.clear());
+    await page.reload(); await openWorkspace();
+    const openStudentDoc = async () => {
+      const popupEvent = page.waitForEvent('popup');
+      await page.getByRole('button', { name: '독스 열기', exact: true }).click();
+      const popup = await popupEvent;
+      await page.getByText('독스에서 첨삭하는 중 · 쓰담으로 돌아오면 확인합니다.', { exact: true }).waitFor();
+      await popup.close();
+    };
+    const returnToWriting = () => page.evaluate(() => { window.qaTimeOffset = (window.qaTimeOffset || 0) + 5000; window.dispatchEvent(new Event('focus')); });
+    await openStudentDoc();
+    await returnToWriting();
+    await page.getByText('아직 독스에 삽입된 첨삭이 없습니다.', { exact: true }).waitFor();
+    feedbackDocs.add('ORIGINAL_1');
+    await page.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await page.getByText('독스 첨삭을 불러왔습니다.', { exact: true }).waitFor();
+    assert.match(await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).inputValue(), /장면을 순서대로/);
+    await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).fill('교사가 직접 쓴 소중한 조언');
+    feedbackTextByDoc.set('ORIGINAL_1', '독스의 새로운 첨삭');
+    await openStudentDoc(); await returnToWriting();
+    await page.getByText('작성 중인 조언을 유지했습니다. 가져온 첨삭을 확인해 주세요.', { exact: true }).waitFor();
+    assert.equal(await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).inputValue(), '교사가 직접 쓴 소중한 조언');
+    await page.getByText('가져온 첨삭 보기', { exact: true }).click();
+    await page.getByRole('button', { name: '현재 조언에 덧붙이기', exact: true }).click();
+    const appended = await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).inputValue();
+    assert.match(appended, /^교사가 직접 쓴 소중한 조언/);
+    assert.match(appended, /독스의 새로운 첨삭/);
+    await openStudentDoc();
+    let releaseOriginalRead;
+    originalReadGate = new Promise((resolve) => { releaseOriginalRead = resolve; });
+    await returnToWriting();
+    await page.getByText('독스 첨삭을 확인하는 중…', { exact: true }).waitFor();
+    await roster.getByRole('button').filter({ hasText: '나학생' }).click();
+    await page.waitForFunction(() => document.getElementById('individual-feedback-note')?.value === '');
+    originalReadGate = null; releaseOriginalRead();
+    await page.waitForLoadState('networkidle');
+    assert.equal(await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).inputValue(), '');
+    assert.equal(await page.getByText('가져온 첨삭 보기', { exact: true }).count(), 0);
+    // Exercise a classroom-sized roster without adding a second student list.
+    for (let number = 4; number <= 27; number++) state.students.push({ classId: 'QA_CLASS', number: String(number), name: `테스트학생${number}`, status: 'STAGE_1_WRITING', locked: false });
+    await page.evaluate((items) => localStorage.setItem('sseudam_students_v7', JSON.stringify(items)), state.students);
+    await page.reload(); await openWorkspace();
+    await openBatch();
+    assert.equal(await page.getByRole('region', { name: '우리 반 학생 명단', exact: true }).count(), 1);
+    assert.equal(await roster.getByRole('checkbox').count(), 27);
+    assert.equal(await roster.getByRole('checkbox', { name: /27번 테스트학생27/ }).isDisabled(), true);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: path.join(process.env.BATCH_FEEDBACK_QA_DIR || root, 'feedback-roster-27-desktop.png'), fullPage: true });
+    await page.setViewportSize({ width: 375, height: 812 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    const rosterScroll = roster.locator('.overflow-y-auto');
+    assert.equal(await rosterScroll.evaluate((element) => element.scrollHeight > element.clientHeight), true);
+    await rosterScroll.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    await roster.getByRole('button').filter({ hasText: '테스트학생27' }).waitFor({ state: 'visible' });
+    await rosterScroll.evaluate((element) => { element.scrollTop = 0; });
+    await page.screenshot({ path: path.join(process.env.BATCH_FEEDBACK_QA_DIR || root, 'feedback-roster-27-mobile.png'), fullPage: true });
     assert.deepEqual(pageErrors, []);
-    console.log(JSON.stringify({ passed: true, checks: ['default individual tab', 'keyboard tab navigation', 'individual draft preserved across tabs', 'batch selection and review preserved across tabs', 'criteria dialog reuse and save', 'unsaved dialog changes protected', 'existing batch criteria retained after settings change', 'personal criteria copy across students', 'clipboard denial fallback', 'partial preparation retry', 'source docs preserved', 'teacher review gate', 'manual edits retained', 'browser reload recovery', 'send selected student only', 'remote recall rejected and refreshed', 'mobile panel and dialog fit', 'dialog focus restored', 'reviewed batch send'], filesCreated: files.length, pageErrors }));
+    console.log(JSON.stringify({ passed: true, checks: ['common roster mode control', 'equal header button heights', 'keyboard mode navigation', 'individual draft preserved per student', 'batch selection and review preserved across modes', 'criteria dialog reuse and save', 'unsaved dialog changes protected', 'existing batch criteria retained after settings change', 'personal criteria copy across students', 'clipboard denial fallback', 'partial preparation retry', 'source docs preserved during batch', 'teacher review gate', 'manual edits retained', 'browser reload recovery', 'send selected student only', 'remote recall rejected and refreshed', 'mobile panel and dialog fit', 'dialog focus restored', 'reviewed batch send', 'focus-driven doc import', 'retry only when needed', 'teacher edits protected and explicitly appended', 'late doc response cannot affect another student', '27-student common roster fits desktop and mobile'], pageErrors }));
   } catch (error) {
     await page.screenshot({ path: path.join(process.env.BATCH_FEEDBACK_QA_DIR || process.cwd(), 'batch-feedback-failure.png'), fullPage: true });
     throw error;

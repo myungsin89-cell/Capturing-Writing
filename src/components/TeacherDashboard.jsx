@@ -12,9 +12,9 @@ import {
 } from './HandDrawnIcons';
 import { GrowthDiffModal } from './GrowthDiffView';
 import StudentShareModal from './StudentShareModal';
-import BatchFeedbackPanel from './BatchFeedbackPanel';
+import BatchFeedbackPanel, { BatchFeedbackWorkspace } from './BatchFeedbackPanel';
 import FeedbackCriteriaDialog from './FeedbackCriteriaDialog';
-import { buildFeedbackPrompt } from '../utils/batchFeedback';
+import { buildFeedbackPrompt, getSubmissionSnapshot } from '../utils/batchFeedback';
 import {
   STAGE_META,
   renderTextWithHighlight,
@@ -179,6 +179,14 @@ export default function TeacherDashboard({
   const [criteriaCopyFailed, setCriteriaCopyFailed] = useState(false);
   const [isCriteriaDialogOpen, setIsCriteriaDialogOpen] = useState(false);
   const [feedbackTab, setFeedbackTab] = useState('individual');
+  const [docSyncStatus, setDocSyncStatus] = useState('idle');
+  const [pendingDocFeedback, setPendingDocFeedback] = useState(null);
+  const docPullingRef = useRef(false);
+  const docContextRef = useRef(null);
+  const personalDraftCacheRef = useRef(new Map());
+  const personalDraftContextRef = useRef('');
+  const personalDraftValuesRef = useRef(null);
+  personalDraftValuesRef.current = { note: feedbackNote, comments: modalFeedbackItems };
   const docOpenedTimeRef = useRef(0);
 
   const currentTopic = topics.find((t) => t.id === openedTopicId) || null;
@@ -218,6 +226,9 @@ export default function TeacherDashboard({
 
   const selectedStudent = getStudentTopicData(rawSelectedStudent, currentTopic);
   const draftPages = getStudentDraftPages(selectedStudent);
+  const selectedSubmissionKey = getSubmissionSnapshot(selectedStudent).submissionKey;
+  const personalContextKey = JSON.stringify([currentTopic?.id, selectedStudent?.number, selectedSubmissionKey]);
+  docContextRef.current = { key: personalContextKey, note: feedbackNote, comments: modalFeedbackItems };
   const isSelectedStudentFinal = isFinalWritingStatus(selectedStudent?.status);
   const canFinalizeSelectedStudent =
     draftPages.length > 0 && isSubmittedWritingStatus(selectedStudent?.status);
@@ -243,6 +254,9 @@ export default function TeacherDashboard({
   useEffect(() => {
     if (!selectedStudent || !currentTopic) return;
     const pages = getStudentDraftPages(selectedStudent);
+    const previousKey = personalDraftContextRef.current;
+    if (previousKey && previousKey !== personalContextKey) personalDraftCacheRef.current.set(previousKey, personalDraftValuesRef.current);
+    personalDraftContextRef.current = personalContextKey;
     setHighlightedQuote('');
     setDraggedQuote('');
     setNewFbComment('');
@@ -251,11 +265,17 @@ export default function TeacherDashboard({
     setEditingReplyId(null);
     setShowPreviousFeedback(false);
     setCriteriaCopyFailed(false);
+    setDocSyncStatus('idle');
+    setPendingDocFeedback(null);
     setActivePageIdx(Math.max(0, pages.length - 1));
 
     // 2차(또는 N차) 수정본 제출 상태(REVISION_SUBMITTED)일 때는 기존 1차 첨삭 내용을 비우고 '새판'으로 시작!
+    const cached = personalDraftCacheRef.current.get(personalContextKey);
     const isRevisionSubmitted = selectedStudent.status === 'REVISION_SUBMITTED';
-    if (isRevisionSubmitted) {
+    if (cached) {
+      setFeedbackNote(cached.note);
+      setModalFeedbackItems(cached.comments);
+    } else if (isRevisionSubmitted) {
       setFeedbackNote('');
       setModalFeedbackItems([]);
     } else {
@@ -263,7 +283,7 @@ export default function TeacherDashboard({
       setFeedbackNote(latestPage?.teacherNote || selectedStudent.teacherNote || '');
       setModalFeedbackItems(latestPage?.feedbackItems || selectedStudent.feedbackItems || []);
     }
-  }, [selectedStudent?.number, currentTopic?.id, draftPages.length, selectedStudent?.status]);
+  }, [personalContextKey]);
 
   const showToast = (msg) => {
     setToastMsg(msg);
@@ -271,46 +291,54 @@ export default function TeacherDashboard({
   };
 
   // [핵심] 구글 독스에서 Brisk로 넣은 첨삭(표/문단/댓글)을 자동으로 읽어와 채워주는 함수
-  const handlePullFromDoc = async (isAutoFocus = false) => {
-    if (!selectedStudent || !onPullFeedbackFromDoc || isPullingDoc) return;
+  const handlePullFromDoc = async () => {
+    if (!selectedStudent || !onPullFeedbackFromDoc || docPullingRef.current) return;
+    const contextKey = docContextRef.current.key;
+    docPullingRef.current = true;
     setIsPullingDoc(true);
+    setDocSyncStatus('checking');
     try {
       const res = await onPullFeedbackFromDoc(
         selectedStudent.number,
         currentTopic?.id,
         selectedStudent.docId
       );
+      if (docContextRef.current.key !== contextKey) return;
       if (res && res.ok) {
         const hasNote = Boolean(res.pulledNote && res.pulledNote.trim());
         const hasComments = Array.isArray(res.pulledComments) && res.pulledComments.length > 0;
 
         if (hasNote || hasComments) {
+          const nextNote = hasNote ? translateBriskTextToKorean(res.pulledNote.trim()) : '';
+          const current = docContextRef.current;
+          const preserveNote = hasNote && current.note.trim() && current.note.trim() !== nextNote.trim();
+          const preserveComments = hasComments && current.comments.length > 0 && JSON.stringify(current.comments) !== JSON.stringify(res.pulledComments);
+          if (preserveNote || preserveComments) {
+            setPendingDocFeedback({ key: contextKey, note: nextNote, comments: hasComments ? res.pulledComments : [] });
+            setDocSyncStatus('protected');
+            setWaitingDocReturn(false);
+            return;
+          }
           if (hasNote) {
-            setFeedbackNote(translateBriskTextToKorean(res.pulledNote.trim()));
+            setFeedbackNote(nextNote);
           }
           if (hasComments) {
             setModalFeedbackItems(res.pulledComments);
           }
           setWaitingDocReturn(false);
-          showToast(
-            isAutoFocus
-              ? `${selectedStudent.name} 학생 독스에서 첨삭을 한국어로 변환해 자동으로 가져왔습니다!`
-              : `${selectedStudent.name} 학생 독스에서 첨삭 내용을 성공적으로 가져왔습니다!`
-          );
+          setPendingDocFeedback(null);
+          setDocSyncStatus('loaded');
         } else {
           // 독스에 아직 첨삭이 들어있지 않은 경우
-          if (!isAutoFocus) {
-            showToast(
-              '구글 독스에 아직 Brisk 첨삭이 입력되지 않았습니다. 독스에서 Brisk 첨삭(Insert)을 먼저 완료해 주세요.'
-            );
-          }
+          setDocSyncStatus('empty');
         }
       } else {
-        if (!isAutoFocus) {
-          showToast(res?.error || '독스에서 첨삭을 가져오지 못했습니다. 학생 독스를 먼저 열어주세요.');
-        }
+        setDocSyncStatus('error');
       }
+    } catch {
+      if (docContextRef.current.key === contextKey) setDocSyncStatus('error');
     } finally {
+      docPullingRef.current = false;
       setIsPullingDoc(false);
     }
   };
@@ -322,7 +350,7 @@ export default function TeacherDashboard({
       // 독스를 연 지 4초 이상 경과한 뒤 복귀했을 때만 자동 동기화 시도 (새 탭 클릭하자마자 0초 만에 튕기는 현상 방지)
       const elapsed = Date.now() - docOpenedTimeRef.current;
       if (elapsed < 4000) return;
-      handlePullFromDoc(true);
+      handlePullFromDoc();
     };
     window.addEventListener('focus', onWindowFocus);
     return () => window.removeEventListener('focus', onWindowFocus);
@@ -350,6 +378,8 @@ export default function TeacherDashboard({
 
   // 해당 학생의 전용 구글 독스로 바로 연결 (비동기 팝업 차단 방지 적용) + Brisk 프롬프트 자동 복사
   const handleOpenDocWithBrisk = async (st) => {
+    const contextKey = docContextRef.current.key;
+    setDocSyncStatus('preparing');
     // 1. 브라우저 팝업 차단을 방지하기 위해 사용자 클릭 직후 빈 탭을 동기적으로 먼저 확보합니다!
     const newTab = window.open('about:blank', '_blank');
     if (newTab && newTab.document) {
@@ -428,11 +458,11 @@ export default function TeacherDashboard({
       window.open(targetUrl, '_blank', 'noopener,noreferrer');
     }
 
-    docOpenedTimeRef.current = Date.now();
-    setWaitingDocReturn(true);
-    showToast(
-      `${st.name} 학생 독스를 열었습니다! 독스에서 Brisk로 첨삭(Insert) 후 이 창으로 돌아오면 자동으로 가져옵니다.`
-    );
+    if (docContextRef.current.key === contextKey) {
+      docOpenedTimeRef.current = Date.now();
+      setWaitingDocReturn(true);
+      setDocSyncStatus('waiting');
+    }
   };
 
   // 클립보드에서 종합 첨삭 바로 붙여넣기 도우미 (GLOW / GROW / WONDERING 자동 한국어 변환 포함)
@@ -1766,6 +1796,13 @@ export default function TeacherDashboard({
     .filter((p) => p.trim().length > 0).length;
 
   return (
+    <BatchFeedbackWorkspace
+      key={`${googleAuth?.user?.email || config.spreadsheetId || 'local'}:${config.activeClassId}:${currentTopic.id}`}
+      topic={currentTopic} students={students} config={config} googleAuth={googleAuth}
+      onSendFeedback={onSendBatchFeedback} selectedStudentNumber={selectedStudent?.number}
+      onSelectStudent={setSelectedStudentNumber}
+    >
+    {(batch) => (
     <div className="flex-1 w-full px-6 lg:px-10 py-5 flex flex-col gap-5">
       {toastMsg && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-2xl bg-[#1B4332] text-white px-5 py-3 shadow-lg flex items-center gap-2 text-sm font-bold">
@@ -1780,7 +1817,7 @@ export default function TeacherDashboard({
           <button
             type="button"
             onClick={() => setOpenedTopicId(null)}
-            className="sketch-btn-secondary px-3.5 py-2 text-xs sm:text-sm font-bold flex items-center gap-1.5 shrink-0"
+            className="sketch-btn-secondary h-11 px-3.5 text-xs sm:text-sm font-bold flex items-center gap-1.5 shrink-0"
           >
             <ArrowLeft className="w-4 h-4" />
             <span>주제 책장으로</span>
@@ -1802,14 +1839,14 @@ export default function TeacherDashboard({
           <button
             type="button"
             onClick={() => setIsShareModalOpen(true)}
-            className="sketch-btn-secondary px-3.5 py-2 text-xs sm:text-sm font-bold flex items-center gap-1.5"
+            className="sketch-btn-secondary h-11 px-3.5 text-xs sm:text-sm font-bold flex items-center gap-1.5"
           >
             <QrCode className="w-4 h-4 text-[#1B4332]" />
             <span>학생 링크 · QR 안내</span>
           </button>
 
           <button type="button" onClick={() => setIsCriteriaDialogOpen(true)}
-            className="sketch-btn-secondary min-h-11 px-3.5 py-2 text-xs sm:text-sm font-bold flex items-center gap-1.5"
+            className="sketch-btn-secondary h-11 px-3.5 text-xs sm:text-sm font-bold flex items-center gap-1.5"
             title={currentTopic.feedbackCriteria ? '이 주제에 저장한 피드백 기준 수정' : '이 주제의 피드백 기준 설정'}>
             <Pencil className="h-4 w-4" aria-hidden="true" />
             <span>피드백 기준</span>
@@ -1826,7 +1863,7 @@ export default function TeacherDashboard({
                   : '전체 학생 공책의 잠금을 해제했습니다.'
               );
             }}
-            className={`px-3.5 py-2 text-xs sm:text-sm font-bold flex items-center gap-1.5 ${
+            className={`h-11 px-3.5 text-xs sm:text-sm font-bold flex items-center gap-1.5 ${
               currentTopic.classLocked ? 'sketch-btn-coral' : 'sketch-btn-secondary'
             }`}
           >
@@ -1847,43 +1884,10 @@ export default function TeacherDashboard({
         onSaved={() => showToast('이 주제의 피드백 기준을 저장했습니다.')}
       />}
 
-      <div role="tablist" aria-label="피드백 작업 선택" className="flex flex-wrap gap-2 border-b border-[#CBD5E1] pb-3"
-        onKeyDown={(event) => {
-          const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
-          if (!keys.includes(event.key)) return;
-          event.preventDefault();
-          const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'));
-          const index = tabs.indexOf(document.activeElement);
-          const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
-          const next = tabs[nextIndex];
-          setFeedbackTab(next.dataset.feedbackTab);
-          next.focus();
-        }}>
-        {[['individual', '개인 피드백'], ['batch', '묶음 피드백']].map(([id, label]) => <button
-          key={id} type="button" role="tab" id={`feedback-tab-${id}`} data-feedback-tab={id}
-          aria-controls={`feedback-panel-${id}`} aria-selected={feedbackTab === id} tabIndex={feedbackTab === id ? 0 : -1}
-          onClick={() => setFeedbackTab(id)}
-          className={`min-h-11 rounded-xl px-5 py-2.5 text-sm font-bold cursor-pointer border ${feedbackTab === id ? 'border-[#1B4332] bg-[#1B4332] text-white' : 'border-[#CBD5E1] bg-white text-[#475569] hover:bg-[#F2F9F5]'}`}>
-          {label}{id === 'batch' && <span className={`ml-2 text-xs ${feedbackTab === id ? 'text-white' : 'text-[#64748B]'}`}>대기 {students.filter((student) => isSubmittedWritingStatus(getStudentTopicData(student, currentTopic)?.status)).length}명</span>}
-        </button>)}
-      </div>
-
-      <div id="feedback-panel-batch" role="tabpanel" aria-labelledby="feedback-tab-batch" hidden={feedbackTab !== 'batch'}>
-      <BatchFeedbackPanel
-        key={`${googleAuth?.user?.email || config.spreadsheetId || 'local'}:${config.activeClassId}:${currentTopic.id}`}
-        topic={currentTopic}
-        students={students}
-        config={config}
-        googleAuth={googleAuth}
-        onSendFeedback={onSendBatchFeedback}
-      />
-      </div>
-
       {/* 2. 3단 와이드 데스크톱 워크스페이스 (좌측 명단 3 : 가운데 학생 글 5 : 우측 첨삭 패널 4) */}
-      <div id="feedback-panel-individual" role="tabpanel" aria-labelledby="feedback-tab-individual" hidden={feedbackTab !== 'individual'}>
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* [좌측 3칸] 우리 반 학생 명단 사이드바 (26명 이상이어도 독립 스크롤 고정 + 질문·첨삭 대기 상단 배치) */}
-        <div className="lg:col-span-3 sketch-card bg-white p-5 flex flex-col max-h-[420px] lg:max-h-[calc(100dvh-165px)] lg:sticky lg:top-20 overflow-hidden">
+        <section aria-label="우리 반 학생 명단" className="lg:col-span-3 sketch-card bg-white p-4 flex flex-col max-h-[520px] lg:max-h-[calc(100dvh-165px)] lg:sticky lg:top-20 overflow-hidden">
           {(() => {
             const enrichedList = students.map((rawSt) => {
               const st = getStudentTopicData(rawSt, currentTopic);
@@ -1928,13 +1932,12 @@ export default function TeacherDashboard({
               const meta = STAGE_META[st.status] || STAGE_META.STAGE_1_WRITING;
               const studentPages = getStudentDraftPages(st);
               const textLen = (studentPages[studentPages.length - 1]?.text || '').trim().length;
+              const selection = batch.selectionFor(st.number);
 
               return (
-                <button
+                <div
                   key={st.number}
-                  type="button"
-                  onClick={() => setSelectedStudentNumber(st.number)}
-                  className={`relative w-full text-left p-3 rounded-2xl border transition flex items-center justify-between gap-2 cursor-pointer ${
+                  className={`relative w-full text-left p-2.5 rounded-2xl border transition flex items-center gap-2 ${
                     isSelected
                       ? 'bg-[#F2F9F5] border-2 border-[#1B4332] shadow-xs'
                       : needsAction
@@ -1942,6 +1945,7 @@ export default function TeacherDashboard({
                       : 'bg-[#FBFBF9] border-[#E2E8F0] hover:bg-white hover:border-[#52B788]'
                   }`}
                 >
+                  {feedbackTab === 'batch' && <label className="min-h-11 min-w-6 flex shrink-0 items-center justify-center cursor-pointer"><input type="checkbox" className="w-4 h-4 accent-[#1B4332]" aria-label={`${st.number}번 ${st.name} 묶음 대상 선택`} disabled={Boolean(batch.busy) || !selection.eligible} checked={selection.checked} onChange={(event) => batch.toggleCandidate(st.number, event.target.checked)} /></label>}
                   {/* 카카오톡 알림처럼 오른쪽 위 모서리에 걸치는 빨간색 질문 배지 */}
                   {unresolvedCount > 0 && (
                     <span className="absolute -top-2 -right-1.5 z-10 px-2 py-0.5 min-w-[22px] h-[22px] rounded-full bg-[#EF4444] text-white text-[11px] font-extrabold flex items-center justify-center gap-0.5 shadow-sm ring-2 ring-white">
@@ -1949,7 +1953,8 @@ export default function TeacherDashboard({
                     </span>
                   )}
 
-                  <div className="flex items-center gap-2.5 min-w-0">
+                  <button type="button" aria-pressed={isSelected} onClick={() => setSelectedStudentNumber(st.number)} className="min-h-12 flex min-w-0 flex-1 flex-wrap items-center justify-between gap-2 text-left cursor-pointer">
+                  <div className="flex items-center gap-2 min-w-0">
                     <span
                       className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center shrink-0 ${
                         isSelected
@@ -1973,10 +1978,11 @@ export default function TeacherDashboard({
                     <span
                       className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${meta.badgeBg} ${meta.badgeBorder} ${meta.badgeText}`}
                     >
-                      {meta.shortLabel}
+                        {feedbackTab === 'batch' && selection.status ? selection.status : meta.shortLabel}
                     </span>
                   </div>
-                </button>
+                  </button>
+                </div>
               );
             };
 
@@ -1987,32 +1993,20 @@ export default function TeacherDashboard({
                     우리 반 학생 ({students.length}명)
                   </h2>
 
-                  <div className="inline-flex rounded-xl bg-[#F8FAFC] border border-[#CBD5E1] p-0.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => setStudentSortMode('priority')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                        studentSortMode === 'priority'
-                          ? 'bg-[#1B4332] text-white'
-                          : 'text-[#475569] hover:text-[#1B4332]'
-                      }`}
-                    >
-                      할 일 우선
-                      {actionNeededList.length > 0 ? ` (${actionNeededList.length})` : ''}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setStudentSortMode('number')}
-                      className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition cursor-pointer ${
-                        studentSortMode === 'number'
-                          ? 'bg-[#1B4332] text-white'
-                          : 'text-[#475569] hover:text-[#1B4332]'
-                      }`}
-                    >
-                      번호순
-                    </button>
-                  </div>
+                  <select aria-label="학생 명단 정렬" value={studentSortMode} onChange={(event) => setStudentSortMode(event.target.value)} className="min-h-9 min-w-0 rounded-lg border border-[#CBD5E1] bg-white px-2 text-xs text-[#475569]"><option value="priority">할 일 우선</option><option value="number">번호순</option></select>
                 </div>
+
+                <div role="tablist" aria-label="피드백 작업 선택" className="mb-3 flex shrink-0 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] p-1" onKeyDown={(event) => {
+                  if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+                  event.preventDefault();
+                  const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'));
+                  const index = tabs.indexOf(document.activeElement);
+                  const next = tabs[event.key === 'Home' ? 0 : event.key === 'End' ? 1 : (index + 1) % 2];
+                  setFeedbackTab(next.dataset.feedbackTab); next.focus();
+                }}>
+                  {[['individual', '개인 피드백'], ['batch', '묶음 피드백']].map(([id, label]) => <button key={id} type="button" role="tab" id={`feedback-tab-${id}`} data-feedback-tab={id} aria-controls={`feedback-panel-${id}`} aria-selected={feedbackTab === id} tabIndex={feedbackTab === id ? 0 : -1} onClick={() => setFeedbackTab(id)} className={`min-h-10 flex-1 rounded-lg px-2 py-2 text-xs font-bold cursor-pointer ${feedbackTab === id ? 'bg-[#1B4332] text-white shadow-sm' : 'text-[#475569]'}`}>{label}</button>)}
+                </div>
+                {feedbackTab === 'batch' && <div className="mb-2 shrink-0 flex flex-wrap items-center justify-between gap-2 text-xs"><button type="button" disabled={Boolean(batch.busy)} onClick={batch.selectWaiting} className="min-h-9 underline cursor-pointer">대기 학생 선택</button><button type="button" disabled={Boolean(batch.busy)} onClick={batch.clearSelection} className="min-h-9 underline cursor-pointer">선택 해제</button></div>}
 
                 <div className="space-y-2.5 flex-1 overflow-y-auto pt-2 pr-1.5">
                   {studentSortMode === 'priority' && actionNeededList.length > 0 ? (
@@ -2041,11 +2035,18 @@ export default function TeacherDashboard({
                     numberSortedList.map(renderStudentRow)
                   )}
                 </div>
+                {feedbackTab === 'batch' && <div className="mt-3 border-t border-[#E2E8F0] pt-3 shrink-0 space-y-2"><button type="button" disabled={Boolean(batch.busy) || !batch.chosen.length || !googleAuth?.accessToken} onClick={() => batch.prepare()} className="sketch-btn-primary min-h-11 w-full px-3 py-2 text-sm font-bold disabled:opacity-50">선택한 {batch.chosen.length}명 묶음 준비</button><p className="text-[11px] text-[#64748B]">{batch.busy || (!googleAuth?.accessToken ? '구글 로그인 후 준비할 수 있습니다.' : '제출 대기 학생만 선택할 수 있습니다.')}</p></div>}
               </>
             );
           })()}
+        </section>
+
+        <div className="lg:col-span-9" id="feedback-panel-batch" role="tabpanel" aria-labelledby="feedback-tab-batch" hidden={feedbackTab !== 'batch'}>
+          <BatchFeedbackPanel model={batch} />
         </div>
 
+        <div className="lg:col-span-9" id="feedback-panel-individual" role="tabpanel" aria-labelledby="feedback-tab-individual" hidden={feedbackTab !== 'individual'}>
+        <div className="grid grid-cols-1 lg:grid-cols-9 gap-6 items-start">
         {/* [가운데 5칸] 선택한 학생의 글 (완성본 기본 표시 + 다회차 페이지 넘김 + 초록 글씨 토글) */}
         {selectedStudent && (
           <div className="lg:col-span-5 flex flex-col gap-4">
@@ -2361,24 +2362,7 @@ export default function TeacherDashboard({
             className="lg:col-span-4 sketch-card bg-[#FBFBF9] p-6 flex flex-col justify-between gap-5"
           >
             <div className="space-y-4 flex-1 flex flex-col">
-              {/* 상단: 학생 구글 독스 바로 열기 (Brisk 실행용) + 독스 첨삭 자동 가져오기 */}
-              <div className="p-3.5 rounded-2xl bg-[#F2F9F5] border border-[#B7E4C7] space-y-2.5">
-                <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="text-xs sm:text-sm font-bold text-[#1B4332]">
-                      {selectedStudent.name} 학생 전용 구글 독스 연동
-                    </div>
-                    <div className="text-[11px] text-[#2D6A4F]">
-                      독스에서 Brisk로 첨삭(Insert) 후 돌아오면 자동으로 읽어옵니다
-                    </div>
-                  </div>
-                  {waitingDocReturn && (
-                    <span className="px-2 py-0.5 rounded-full bg-[#FEF3C7] border border-[#F59E0B] text-[#92400E] text-[10px] font-bold shrink-0">
-                      독스 복귀 대기중
-                    </span>
-                  )}
-                </div>
-
+              <div className="border-b border-[#E2E8F0] pb-4 space-y-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
@@ -2402,29 +2386,29 @@ export default function TeacherDashboard({
                   <button
                     type="button"
                     onClick={() => handleOpenDocWithBrisk(selectedStudent)}
-                    className="sketch-btn-primary min-h-11 px-3 py-2 text-xs font-bold flex items-center justify-center gap-1.5"
+                    disabled={docSyncStatus === 'preparing'}
+                    className="sketch-btn-secondary min-h-11 px-3 py-2 text-xs font-bold flex items-center justify-center gap-1.5 disabled:opacity-50"
                   >
-                    <HandDrawnDocIcon size={14} color="#FFFFFF" />
-                    <span>학생 독스 열기</span>
+                    <HandDrawnDocIcon size={14} color="#1B4332" />
+                    <span>{docSyncStatus === 'preparing' ? '독스 준비 중…' : '독스 열기'}</span>
                     <ExternalLink className="w-3.5 h-3.5" />
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => handlePullFromDoc(false)}
-                    disabled={isPullingDoc}
-                    className={`min-h-11 px-3 py-2 text-xs font-bold flex items-center justify-center gap-1.5 rounded-xl border transition cursor-pointer ${
-                      waitingDocReturn
-                        ? 'bg-[#FEF9C3] border-2 border-[#F59E0B] text-[#92400E] shadow-xs'
-                        : 'sketch-btn-secondary'
-                    }`}
-                  >
-                    <RefreshCw className={`w-3.5 h-3.5 ${isPullingDoc ? 'animate-spin' : ''}`} />
-                    <span>
-                      {isPullingDoc ? '가져오는 중...' : '첨삭 가져오기'}
-                    </span>
-                  </button>
                 </div>
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#64748B]">
+                  <p role="status">{{ idle: '독스에서 첨삭한 뒤 돌아오면 자동으로 불러옵니다.', preparing: '최신 글로 독스를 준비하고 있습니다.', waiting: '독스에서 첨삭하는 중 · 쓰담으로 돌아오면 확인합니다.', checking: '독스 첨삭을 확인하는 중…', loaded: '독스 첨삭을 불러왔습니다.', empty: '아직 독스에 삽입된 첨삭이 없습니다.', error: '독스 첨삭을 확인하지 못했습니다.', protected: '작성 중인 조언을 유지했습니다. 가져온 첨삭을 확인해 주세요.' }[docSyncStatus]}</p>
+                  {['empty', 'error'].includes(docSyncStatus) && <button type="button" onClick={handlePullFromDoc} disabled={isPullingDoc} className="min-h-9 font-bold text-[#2D6A4F] underline cursor-pointer">다시 확인</button>}
+                </div>
+                {pendingDocFeedback && <details className="rounded-xl border border-[#D8F3DC] bg-white p-3 text-sm"><summary className="cursor-pointer font-bold text-[#1B4332]">가져온 첨삭 보기</summary><textarea readOnly aria-label="자동 반영을 보류한 독스 첨삭" value={[pendingDocFeedback.note, ...pendingDocFeedback.comments.map((item) => `${item.quote || ''}\n${item.comment}`)].filter(Boolean).join('\n\n')} rows={5} className="mt-2 w-full rounded-lg border border-[#CBD5E1] p-2 text-sm" /><button type="button" className="sketch-btn-secondary mt-2 min-h-11 px-3 py-2 text-xs font-bold" onClick={() => {
+                  if (pendingDocFeedback.key !== docContextRef.current.key) return;
+                  if (pendingDocFeedback.note) setFeedbackNote((previous) => previous.includes(pendingDocFeedback.note) ? previous : [previous, pendingDocFeedback.note].filter(Boolean).join('\n\n'));
+                  setModalFeedbackItems((previous) => {
+                    const seen = new Set(previous.map((item) => JSON.stringify([item.quote, item.comment])));
+                    const additions = pendingDocFeedback.comments.filter((item) => { const key = JSON.stringify([item.quote, item.comment]); if (seen.has(key)) return false; seen.add(key); return true; }).map((item) => ({ ...item, id: crypto.randomUUID() }));
+                    return [...previous, ...additions];
+                  });
+                  setPendingDocFeedback(null); setDocSyncStatus('loaded');
+                }}>현재 조언에 덧붙이기</button></details>}
               </div>
 
               {/* 이전 차수(1차 등)에 학생에게 해주었던 첨삭 기록 보기 (2차 이상 첨삭 시 참고용 아코디언) */}
@@ -2731,6 +2715,7 @@ export default function TeacherDashboard({
       </div>
 
       {/* [처음 글 · 고쳐 쓴 글 크게 비교하기] 초대형 모달 */}
+      </div>
       <GrowthDiffModal
         isOpen={isDiffModalOpen}
         onClose={() => setIsDiffModalOpen(false)}
@@ -2821,5 +2806,7 @@ export default function TeacherDashboard({
         onOpenGasSetup={onOpenGasSetup}
       />
     </div>
+    )}
+    </BatchFeedbackWorkspace>
   );
 }
