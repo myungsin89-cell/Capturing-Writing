@@ -25,7 +25,6 @@ import {
   FolderPlus,
   Plus,
   Trash2,
-  Eye,
   BookOpen,
   Share2,
   Check,
@@ -56,7 +55,10 @@ export default function TeacherDashboard({
   onSelectTopic,
   openedTopicId: propOpenedTopicId,
   onChangeOpenedTopicId,
+  selectedStudentNumber: propSelectedStudentNumber,
+  onChangeSelectedStudentNumber,
   onCreateNewTopic,
+  onUpdateTopic,
   onDeleteTopic,
   onManageStudents,
   students,
@@ -76,8 +78,7 @@ export default function TeacherDashboard({
   onUpdateStudentStatus,
   onBatchDeadline,
   onReplyQuestion,
-  onPullFeedbackFromDoc,
-  onPreviewAsStudent
+  onPullFeedbackFromDoc
 }) {
   // 교사 진입 단계: 'login'(구글 로그인) -> 'classSelect'(내 학급 선택·전담 다학급 지원) -> 'bookshelf'(주제 책장 및 관리)
   const [localTeacherStep, setLocalTeacherStep] = useState('login');
@@ -114,9 +115,17 @@ export default function TeacherDashboard({
     onChangeOpenedTopicId?.(topicId);
   };
 
-  const [selectedStudentNumber, setSelectedStudentNumber] = useState(
+  const [localSelectedStudentNumber, setLocalSelectedStudentNumber] = useState(
     () => students[0]?.number || '1'
   );
+  const selectedStudentNumber =
+    propSelectedStudentNumber === undefined
+      ? localSelectedStudentNumber
+      : propSelectedStudentNumber;
+  const setSelectedStudentNumber = (number) => {
+    setLocalSelectedStudentNumber(number);
+    onChangeSelectedStudentNumber?.(number);
+  };
   // 오른쪽 첨삭 메모 클릭 또는 본문 드래그 시 가운데 학생 본문에 형광펜 표시할 문장
   const [highlightedQuote, setHighlightedQuote] = useState('');
   // 대형 나란히 비교 모달 열림 여부
@@ -146,6 +155,9 @@ export default function TeacherDashboard({
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newPrompt, setNewPrompt] = useState('');
+  const [editingTopic, setEditingTopic] = useState(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editPrompt, setEditPrompt] = useState('');
   const [rosterText, setRosterText] = useState('6, 강민준\n7, 윤서아\n8, 장하준');
 
   const [linkCopied, setLinkCopied] = useState(false);
@@ -428,6 +440,22 @@ export default function TeacherDashboard({
     setNewPrompt('');
     setShowCreateModal(false);
     showToast(`새 글쓰기 주제 공책이 생성되어 우리 반 학생 ${students.length}명에게 자동 연결되었습니다!`);
+  };
+
+  const handleEditTopicSubmit = async (e) => {
+    e.preventDefault();
+    if (!editingTopic?.id || !editTitle.trim()) return;
+    const result = await onUpdateTopic?.({
+      topicId: editingTopic.id,
+      title: editTitle.trim(),
+      prompt: editPrompt.trim()
+    });
+    if (result?.ok !== false) {
+      showToast('글쓰기 주제와 안내문을 수정했습니다!');
+      setEditingTopic(null);
+      setEditTitle('');
+      setEditPrompt('');
+    }
   };
 
   // 학급 또는 글쓰기 주제 삭제 실행 (deleteDriveFiles: false=목록만 삭제 / true=구글 독스 및 관련 자료 모두 삭제)
@@ -1160,6 +1188,19 @@ export default function TeacherDashboard({
                         type="button"
                         onClick={(e) => {
                           e.stopPropagation();
+                          setEditingTopic(tp);
+                          setEditTitle(tp.title || '');
+                          setEditPrompt(tp.prompt || '');
+                        }}
+                        title="주제 수정"
+                        className="w-7 h-7 rounded-lg bg-white border border-[#CBD5E1] text-[#64748B] hover:text-[#1B4332] hover:border-[#1B4332] hover:bg-[#F2F9F5] flex items-center justify-center transition cursor-pointer shrink-0"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
                           setDeleteConfirmTarget({
                             type: 'topic',
                             id: tp.id,
@@ -1268,6 +1309,75 @@ export default function TeacherDashboard({
                     className="sketch-btn-primary px-5 py-2 text-xs font-bold"
                   >
                     새 주제 생성하기
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* 기존 글쓰기 주제 제목·안내문 수정 */}
+        {editingTopic && (
+          <div className="fixed inset-0 z-50 bg-black/50 backdrop-blur-[2px] flex items-center justify-center p-4">
+            <div className="w-full max-w-md sketch-card bg-white p-6">
+              <div className="flex items-center justify-between pb-3 border-b border-[#E2E8F0]">
+                <h3 className="text-base font-bold text-[#1B4332]">
+                  글쓰기 주제 수정
+                </h3>
+                <button
+                  type="button"
+                  onClick={() => setEditingTopic(null)}
+                  className="p-1 rounded-lg text-[#64748B] hover:text-[#1E293B] cursor-pointer"
+                  aria-label="주제 수정 닫기"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleEditTopicSubmit} className="mt-4 space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-[#1B4332] mb-1">
+                    글쓰기 주제 제목
+                  </label>
+                  <input
+                    type="text"
+                    value={editTitle}
+                    onChange={(e) => setEditTitle(e.target.value)}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#CBD5E1] bg-[#FBFBF9] text-sm font-semibold"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[#1B4332] mb-1">
+                    학생 글쓰기 안내문
+                  </label>
+                  <textarea
+                    rows={4}
+                    value={editPrompt}
+                    onChange={(e) => setEditPrompt(e.target.value)}
+                    placeholder="학생에게 보여 줄 글쓰기 안내를 적어 주세요."
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#CBD5E1] bg-[#FBFBF9] text-sm leading-relaxed"
+                  />
+                </div>
+
+                <div className="p-3 rounded-xl bg-[#F2F9F5] border border-[#B7E4C7] text-xs font-semibold text-[#1B4332]">
+                  저장하면 학생 공책의 주제 제목과 안내문에도 바로 반영됩니다.
+                </div>
+
+                <div className="flex justify-end gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingTopic(null)}
+                    className="sketch-btn-secondary px-4 py-2 text-xs font-bold"
+                  >
+                    취소
+                  </button>
+                  <button
+                    type="submit"
+                    className="sketch-btn-primary px-5 py-2 text-xs font-bold"
+                  >
+                    수정 내용 저장하기
                   </button>
                 </div>
               </form>
@@ -1597,7 +1707,7 @@ export default function TeacherDashboard({
               (a, b) => Number(a.st.number) - Number(b.st.number)
             );
 
-            const renderStudentRow = ({ rawSt, st, unresolvedCount, needsAction }) => {
+            const renderStudentRow = ({ st, unresolvedCount, needsAction }) => {
               const isSelected = String(st.number) === String(selectedStudent?.number);
               const meta = STAGE_META[st.status] || STAGE_META.STAGE_1_WRITING;
               const textLen = (
@@ -1609,8 +1719,10 @@ export default function TeacherDashboard({
               ).trim().length;
 
               return (
-                <div
+                <button
                   key={st.number}
+                  type="button"
+                  onClick={() => setSelectedStudentNumber(st.number)}
                   className={`relative w-full text-left p-3 rounded-2xl border transition flex items-center justify-between gap-2 cursor-pointer ${
                     isSelected
                       ? 'bg-[#F2F9F5] border-2 border-[#1B4332] shadow-xs'
@@ -1626,48 +1738,34 @@ export default function TeacherDashboard({
                     </span>
                   )}
 
-                  <button
-                    type="button"
-                    onClick={() => setSelectedStudentNumber(st.number)}
-                    className="flex-1 min-w-0 flex items-center justify-between gap-2 text-left cursor-pointer"
-                  >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span
-                        className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center shrink-0 ${
-                          isSelected
-                            ? 'bg-[#1B4332] text-white'
-                            : 'bg-white border border-[#CBD5E1] text-[#1B4332]'
-                        }`}
-                      >
-                        {st.number}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-sm font-bold text-[#1E293B] truncate">
-                          {st.name}
-                        </div>
-                        <div className="text-[11px] text-[#64748B] truncate">
-                          {textLen > 0 ? `${textLen}자 작성됨` : '작성 전'}
-                        </div>
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span
+                      className={`w-7 h-7 rounded-lg text-xs font-bold flex items-center justify-center shrink-0 ${
+                        isSelected
+                          ? 'bg-[#1B4332] text-white'
+                          : 'bg-white border border-[#CBD5E1] text-[#1B4332]'
+                      }`}
+                    >
+                      {st.number}
+                    </span>
+                    <div className="min-w-0">
+                      <div className="text-sm font-bold text-[#1E293B] truncate">
+                        {st.name}
+                      </div>
+                      <div className="text-[11px] text-[#64748B] truncate">
+                        {textLen > 0 ? `${textLen}자 작성됨` : '작성 전'}
                       </div>
                     </div>
+                  </div>
 
+                  <div className="flex items-center shrink-0">
                     <span
                       className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${meta.badgeBg} ${meta.badgeBorder} ${meta.badgeText}`}
                     >
                       {meta.shortLabel}
                     </span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => onPreviewAsStudent(rawSt, currentTopic?.id)}
-                    className="relative z-10 p-1.5 rounded-lg bg-white border border-[#CBD5E1] text-[#475569] hover:text-[#1B4332] hover:border-[#1B4332] cursor-pointer shrink-0"
-                    title={`${st.name} 학생 공책 바로 보기`}
-                    aria-label={`${st.name} 학생 공책 바로 보기`}
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+                  </div>
+                </button>
               );
             };
 
@@ -1770,14 +1868,6 @@ export default function TeacherDashboard({
                     <span>주제별 모음</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => onPreviewAsStudent(rawSelectedStudent, currentTopic?.id)}
-                    className="px-2.5 py-1.5 rounded-xl bg-[#FBFBF9] border border-[#CBD5E1] text-xs font-bold text-[#475569] hover:text-[#1B4332] flex items-center gap-1 cursor-pointer"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>학생 공책 바로 보기</span>
-                  </button>
                 </div>
               </div>
 

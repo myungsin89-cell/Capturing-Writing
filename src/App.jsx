@@ -85,6 +85,7 @@ export default function App() {
   const [isTeacherPreview, setIsTeacherPreview] = useState(false);
   const [teacherPreviewTopicId, setTeacherPreviewTopicId] = useState('');
   const [teacherOpenedTopicId, setTeacherOpenedTopicId] = useState(null);
+  const [teacherSelectedStudentNumber, setTeacherSelectedStudentNumber] = useState('');
 
   const [gasUrl, setGasUrl] = useState(
     () => urlGasUrl || localStorage.getItem(STORAGE_KEYS.GAS_URL) || ''
@@ -912,6 +913,7 @@ export default function App() {
   const handleSelectClass = (cls) => {
     if (!cls) return;
     setTeacherOpenedTopicId(null);
+    setTeacherSelectedStudentNumber('');
     const classTopics = topics.filter(
       (topic) => String(topic.classId || legacyClassId) === String(cls.id)
     );
@@ -1067,6 +1069,31 @@ export default function App() {
     }));
 
     setSelectedTopicId(newTopicId);
+  };
+
+  // 교사: 기존 글쓰기 주제의 제목과 학생 안내문 수정
+  const handleUpdateTopic = async ({ topicId, title, prompt }) => {
+    const cleanTitle = String(title || '').trim();
+    const cleanPrompt = String(prompt || '').trim();
+    if (!topicId || !cleanTitle) return { ok: false };
+
+    setTopics((prev) =>
+      prev.map((topic) =>
+        String(topic.id) === String(topicId)
+          ? { ...topic, title: cleanTitle, prompt: cleanPrompt }
+          : topic
+      )
+    );
+
+    if (String(config.activeTopicId) === String(topicId)) {
+      setConfig((prev) => ({
+        ...prev,
+        assignmentTitle: cleanTitle,
+        assignmentPrompt: cleanPrompt
+      }));
+    }
+
+    return { ok: true };
   };
 
   // 교사: 학급 삭제 (목록만 삭제 vs 관련 시트 데이터 및 구글 독스 파일까지 모두 삭제)
@@ -1444,10 +1471,23 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => {
-                    setActiveStudent(null);
-                    setTeacherPreviewTopicId('');
-                    setIsTeacherPreview(false);
-                    setRoleMode('student');
+                    if (roleMode === 'student' && isTeacherPreview) return;
+                    const selectedStudent =
+                      visibleStudents.find(
+                        (student) =>
+                          String(student.number) === String(teacherSelectedStudentNumber)
+                      ) || visibleStudents[0];
+                    if (selectedStudent) {
+                      handlePreviewAsStudent(
+                        selectedStudent,
+                        teacherOpenedTopicId || config.activeTopicId || ''
+                      );
+                    } else {
+                      setActiveStudent(null);
+                      setTeacherPreviewTopicId('');
+                      setIsTeacherPreview(false);
+                      setRoleMode('student');
+                    }
                   }}
                   className={`px-3.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1.5 transition whitespace-nowrap cursor-pointer ${
                     roleMode === 'student'
@@ -1516,7 +1556,10 @@ export default function App() {
             onSelectTopic={setSelectedTopicId}
             openedTopicId={teacherOpenedTopicId}
             onChangeOpenedTopicId={setTeacherOpenedTopicId}
+            selectedStudentNumber={teacherSelectedStudentNumber}
+            onChangeSelectedStudentNumber={setTeacherSelectedStudentNumber}
             onCreateNewTopic={handleCreateNewTopic}
+            onUpdateTopic={handleUpdateTopic}
             onDeleteTopic={handleDeleteTopic}
             onManageStudents={handleManageStudents}
             students={visibleStudents}
@@ -1540,7 +1583,6 @@ export default function App() {
             onBatchDeadline={handleBatchDeadline}
             onReplyQuestion={handleReplyQuestion}
             onPullFeedbackFromDoc={handlePullFeedbackFromDoc}
-            onPreviewAsStudent={handlePreviewAsStudent}
           />
         )}
       </main>
