@@ -2,6 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import {
   computeKoreanDiff,
   getStudentDraftPages,
+  isFinalWritingStatus,
   renderTextWithGreenAdditions,
   renderTextWithHighlight
 } from '../utils/diffHelper';
@@ -16,6 +17,7 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
   const pages = useMemo(() => getStudentDraftPages(student), [student]);
   const pieceTitle = student?.pieceTitle || topicTitle || '제목 없음';
   const authorName = student?.name || '';
+  const isFinalCompleted = isFinalWritingStatus(student?.status);
 
   // 비교할 왼쪽(이전 차수) 페이지 인덱스와 오른쪽(이후 차수) 페이지 인덱스
   const [leftIdx, setLeftIdx] = useState(0);
@@ -180,7 +182,7 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
               }}
               className="px-3 py-2 rounded-xl bg-white border border-[#CBD5E1] hover:border-[#1B4332] text-xs font-bold text-[#1B4332] cursor-pointer"
             >
-              1차 ↔ 최종({pages.length}차) 비교
+              1차 ↔ {isFinalCompleted ? '최종' : '최신'}({pages.length}차) 비교
             </button>
           )}
 
@@ -196,7 +198,9 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
           >
             <Eye className="w-3.5 h-3.5" />
             <span>
-              {showGreenText ? '추가된 표현 초록 글씨: 켜짐' : '추가된 표현 초록 글씨: 꺼짐 (순수 완성본)'}
+              {showGreenText
+                ? '추가된 표현 초록 글씨: 켜짐'
+                : `추가된 표현 초록 글씨: 꺼짐 (${isFinalCompleted ? '최종 완성본' : '최신 수정본'})`}
             </span>
           </button>
         </div>
@@ -237,7 +241,12 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
             <span className="text-base font-bold text-[#1B4332] flex items-center gap-1.5">
               <HandDrawnLeafIcon size={17} color="#1B4332" />
               <span>
-                {rightPage.label} {rightIdx === pages.length - 1 ? '(최신 완성본)' : ''}
+                {rightPage.label}{' '}
+                {rightIdx === pages.length - 1
+                  ? isFinalCompleted
+                    ? '(최종 완성본)'
+                    : '(최신 수정본)'
+                  : ''}
               </span>
             </span>
             <div className="flex items-center gap-2 text-xs font-bold text-[#1B4332]">

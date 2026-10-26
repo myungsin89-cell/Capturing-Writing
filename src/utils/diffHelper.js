@@ -188,6 +188,7 @@ export function getStudentDraftPages(student) {
         round: idx + 1,
         label: `${idx + 1}차 글`,
         text: d.text,
+        pieceTitle: d.pieceTitle || student.pieceTitle || '',
         teacherNote: d.teacherNote || '',
         feedbackItems: d.feedbackItems || [],
         updatedAt: d.updatedAt || ''
@@ -206,9 +207,22 @@ export function getStudentDraftPages(student) {
     round: idx + 1,
     label: `${idx + 1}차 글`,
     text: txt,
+    pieceTitle: student.pieceTitle || '',
     teacherNote: idx === rawDrafts.length - 1 ? student.teacherNote || '' : '',
     feedbackItems: idx === rawDrafts.length - 1 ? student.feedbackItems || [] : []
   }));
+}
+
+export function isFinalWritingStatus(status) {
+  return status === 'FINAL_COMPLETED' || status === 'STAGE_3_COMPLETED';
+}
+
+export function isSubmittedWritingStatus(status) {
+  return (
+    status === 'REVISION_SUBMITTED' ||
+    status === 'STAGE_1_SUBMITTED' ||
+    status === 'STAGE_2_SUBMITTED'
+  );
 }
 
 export const STAGE_META = {
@@ -244,7 +258,23 @@ export const STAGE_META = {
     badgeBorder: 'border-[#38BDF8]',
     badgeText: 'text-[#075985]'
   },
+  REVISION_SUBMITTED: {
+    label: '수정본 제출완료 · 확인 대기중',
+    shortLabel: '수정본 확인 대기',
+    step: 2,
+    badgeBg: 'bg-[#E0F2FE]',
+    badgeBorder: 'border-[#38BDF8]',
+    badgeText: 'text-[#075985]'
+  },
   STAGE_3_COMPLETED: {
+    label: '최종 완성본',
+    shortLabel: '최종 완성',
+    step: 3,
+    badgeBg: 'bg-[#D8F3DC]',
+    badgeBorder: 'border-[#1B4332]',
+    badgeText: 'text-[#1B4332]'
+  },
+  FINAL_COMPLETED: {
     label: '최종 완성본',
     shortLabel: '최종 완성',
     step: 3,

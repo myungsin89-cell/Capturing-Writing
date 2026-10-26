@@ -14,7 +14,8 @@ import {
   STAGE_META,
   renderTextWithHighlight,
   renderTextWithGreenAdditions,
-  getStudentDraftPages
+  getStudentDraftPages,
+  isFinalWritingStatus
 } from '../utils/diffHelper';
 import {
   Send,
@@ -45,6 +46,7 @@ export default function StudentStudio({
   const [loginError, setLoginError] = useState('');
   const [isEntering, setIsEntering] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isQuestionSubmitting, setIsQuestionSubmitting] = useState(false);
 
   // null이면 [내 글쓰기 책장] 화면, 값이 있으면 해당 [주제 공책 글쓰기] 화면!
   const [openedTopicId, setOpenedTopicId] = useState(null);
@@ -61,6 +63,7 @@ export default function StudentStudio({
   const [showGreenText, setShowGreenText] = useState(false);
   const [viewingPageIdx, setViewingPageIdx] = useState(null); // null이면 현재 작성·수정 공책, 숫자면 해당 차수 글 보기
   const textareaRef = useRef(null);
+  const questionSubmittingRef = useRef(false);
 
   const currentStudent =
     students.find((s) => String(s.number) === String(activeStudent?.number)) ||
@@ -107,12 +110,7 @@ export default function StudentStudio({
 
   const feedbackItems = topicStudentData?.feedbackItems || [];
 
-  const currentWritingStage = (() => {
-    if (!topicStudentData) return 1;
-    const st = topicStudentData.status;
-    if (st === 'STAGE_1_WRITING' || st === 'STAGE_1_SUBMITTED') return 1;
-    return Math.max(2, draftPages.length + (st === 'FEEDBACK_DONE' ? 1 : 0));
-  })();
+  const currentWritingStage = Math.max(1, draftPages.length + 1);
 
   useEffect(() => {
     if (!topicStudentData) return;
@@ -181,18 +179,11 @@ export default function StudentStudio({
       showToast('글을 먼저 작성해 주세요.');
       return;
     }
-    const nextStage =
-      topicStudentData.status === 'STAGE_1_WRITING'
-        ? 1
-        : topicStudentData.status === 'FEEDBACK_DONE'
-        ? 2
-        : 3;
-
     setIsSubmitting(true);
     try {
       const result = await onSubmitStage(
         currentStudent.number,
-        nextStage,
+        currentWritingStage,
         editorText,
         selectedTopic.id,
         pieceTitle.trim()
@@ -210,20 +201,28 @@ export default function StudentStudio({
   const handleQuestionSubmit = async (e) => {
     e.preventDefault();
     if (isTeacherPreview) return;
-    if (!questionInput.trim()) return;
-    const result = await onAddQuestion({
-      number: currentStudent.number,
-      name: currentStudent.name,
-      topicId: selectedTopic?.id || '',
-      source: '학생 질문',
-      quote: '',
-      question: questionInput.trim()
-    });
-    if (result?.ok) {
-      setQuestionInput('');
-      showToast('선생님께 질문을 보냈어요!');
-    } else {
-      showToast(result?.error || '질문을 보내지 못했습니다. 다시 시도해 주세요.');
+    const cleanQuestion = questionInput.trim();
+    if (!cleanQuestion || questionSubmittingRef.current) return;
+    questionSubmittingRef.current = true;
+    setIsQuestionSubmitting(true);
+    try {
+      const result = await onAddQuestion({
+        number: currentStudent.number,
+        name: currentStudent.name,
+        topicId: selectedTopic?.id || '',
+        source: '학생 질문',
+        quote: '',
+        question: cleanQuestion
+      });
+      if (result?.ok) {
+        setQuestionInput('');
+        showToast('선생님께 질문을 보냈어요!');
+      } else {
+        showToast(result?.error || '질문을 보내지 못했습니다. 다시 시도해 주세요.');
+      }
+    } finally {
+      questionSubmittingRef.current = false;
+      setIsQuestionSubmitting(false);
     }
   };
 
@@ -342,7 +341,6 @@ export default function StudentStudio({
           {topics.map((tp, idx) => {
             const stData = getStudentDataForTopic(tp);
             const meta = STAGE_META[stData?.status] || STAGE_META.STAGE_1_WRITING;
-            const latestText = (stData?.draft3 || stData?.draft2 || stData?.draft1 || '').trim();
             const hasFeedback =
               Boolean(stData?.teacherNote) || (stData?.feedbackItems || []).length > 0;
 
@@ -424,6 +422,7 @@ export default function StudentStudio({
   // ============================================================================
   const isLocked = Boolean(topicStudentData?.locked) || Boolean(selectedTopic?.classLocked);
   const isReadOnly = isTeacherPreview || isLocked;
+  const isFinalCompleted = isFinalWritingStatus(topicStudentData?.status);
   const hasRevision = draftPages.length >= 2;
   const activeDisplayText =
     viewingPageIdx !== null && draftPages[viewingPageIdx]
@@ -544,6 +543,11 @@ export default function StudentStudio({
                         }`}
                       >
                         {pg.label}
+                        {idx === draftPages.length - 1
+                          ? isFinalCompleted
+                            ? ' · 최종 완성본'
+                            : ' · 최신 수정본'
+                          : ''}
                       </button>
                     ))}
                     {!isReadOnly && (
@@ -644,7 +648,7 @@ export default function StudentStudio({
                         ? '선생님이 첨삭해 주신 문장에 노란 형광펜이 켜졌어요!'
                         : showGreenText
                         ? '고치며 새로 추가한 표현이 초록색 글씨로 표시되었어요!'
-                        : `${draftPages[viewingPageIdx]?.label || '이전 차수'} 완성본을 보고 있어요.`}
+                        : `${draftPages[viewingPageIdx]?.label || '이전 차수'}을 보고 있어요.`}
                       {!isReadOnly ? ' (공책을 클릭하면 바로 이어서 고쳐 쓸 수 있어요)' : ''}
                     </span>
                   </div>
@@ -679,10 +683,15 @@ export default function StudentStudio({
                 <BookOpen className="w-4 h-4" />
                 <span>교사 미리보기에서는 학생 공책을 읽기만 할 수 있습니다</span>
               </div>
+            ) : isFinalCompleted ? (
+              <div className="py-3.5 px-6 rounded-xl bg-[#D8F3DC] border border-[#1B4332] text-sm font-bold text-[#1B4332] flex items-center gap-2">
+                <HandDrawnCheckIcon size={18} color="#1B4332" />
+                <span>선생님이 최종 완성본으로 확인했어요.</span>
+              </div>
             ) : isLocked ? (
               <div className="py-3.5 px-6 rounded-xl bg-[#F2F9F5] border border-[#52B788] text-sm font-bold text-[#1B4332] flex items-center gap-2">
                 <HandDrawnCheckIcon size={18} color="#1B4332" />
-                <span>제출 완료된 글입니다</span>
+                <span>최신 수정본을 제출했어요. 선생님의 확인을 기다리고 있어요.</span>
               </div>
             ) : (
               <button
@@ -697,7 +706,7 @@ export default function StudentStudio({
                     ? '안전하게 제출하고 있어요...'
                     : currentWritingStage === 1
                     ? '다 썼어요! 선생님께 제출하기'
-                    : '고쳐 쓰기 완료! 다시 제출하기'}
+                    : `${currentWritingStage}차 수정 완료! 다시 제출하기`}
                 </span>
               </button>
             )}
@@ -829,10 +838,11 @@ export default function StudentStudio({
                 />
                 <button
                   type="submit"
-                  className="sketch-btn-secondary px-4 py-2.5 text-sm font-bold flex items-center gap-1.5 shrink-0"
+                  disabled={isQuestionSubmitting}
+                  className="sketch-btn-secondary px-4 py-2.5 text-sm font-bold flex items-center gap-1.5 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   <Send className="w-4 h-4" />
-                  <span>질문</span>
+                  <span>{isQuestionSubmitting ? '보내는 중' : '질문'}</span>
                 </button>
               </form>
             )}

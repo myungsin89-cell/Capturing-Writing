@@ -16,7 +16,9 @@ import {
   STAGE_META,
   renderTextWithHighlight,
   renderTextWithGreenAdditions,
-  getStudentDraftPages
+  getStudentDraftPages,
+  isFinalWritingStatus,
+  isSubmittedWritingStatus
 } from '../utils/diffHelper';
 import { translateBriskTextToKorean } from '../services/googleDriveService';
 import {
@@ -144,7 +146,7 @@ export default function TeacherDashboard({
   const [editingReplyId, setEditingReplyId] = useState(null);
   const [editingReplyText, setEditingReplyText] = useState('');
 
-  // 다회차(1차·2차·3차·4차...) 페이지 넘김 인덱스 & 초록 글씨 표시 토글 (기본값: 순수 완성본 보기)
+  // 다회차(1차·2차·3차·4차...) 페이지 넘김 인덱스 & 초록 글씨 표시 토글
   const [activePageIdx, setActivePageIdx] = useState(0);
   const [showGreenText, setShowGreenText] = useState(false);
 
@@ -194,6 +196,9 @@ export default function TeacherDashboard({
 
   const selectedStudent = getStudentTopicData(rawSelectedStudent, currentTopic);
   const draftPages = getStudentDraftPages(selectedStudent);
+  const isSelectedStudentFinal = isFinalWritingStatus(selectedStudent?.status);
+  const canFinalizeSelectedStudent =
+    draftPages.length > 0 && isSubmittedWritingStatus(selectedStudent?.status);
 
   useEffect(() => {
     if (!selectedStudent || !currentTopic) return;
@@ -336,6 +341,32 @@ export default function TeacherDashboard({
       feedbackItems: modalFeedbackItems
     });
     showToast(`${selectedStudent.name} 학생 공책으로 첨삭을 보내고 수정 모드를 열었습니다!`);
+  };
+
+  const handleFinalizeWriting = () => {
+    if (!selectedStudent || !canFinalizeSelectedStudent) return;
+    onUpdateStudentStatus({
+      number: selectedStudent.number,
+      topicId: currentTopic?.id || '',
+      status: 'FINAL_COMPLETED',
+      locked: true,
+      teacherNote: feedbackNote,
+      feedbackItems: modalFeedbackItems
+    });
+    showToast(`${selectedStudent.name} 학생의 글을 최종 완성본으로 확정했습니다!`);
+  };
+
+  const handleReopenWriting = () => {
+    if (!selectedStudent) return;
+    onUpdateStudentStatus({
+      number: selectedStudent.number,
+      topicId: currentTopic?.id || '',
+      status: 'FEEDBACK_DONE',
+      locked: false,
+      teacherNote: feedbackNote,
+      feedbackItems: modalFeedbackItems
+    });
+    showToast(`${selectedStudent.name} 학생이 다시 수정할 수 있도록 공책을 열었습니다!`);
   };
 
   const parseRosterLines = (txt = '') =>
@@ -1136,15 +1167,12 @@ export default function TeacherDashboard({
           {topics.map((tp) => {
             const submittedCount = students.filter((rawSt) => {
               const stData = getStudentTopicData(rawSt, tp);
-              return Boolean((stData?.draft1 || stData?.draft2 || stData?.draft3)?.trim());
+              return getStudentDraftPages(stData).length > 0;
             }).length;
 
             const waitingFeedbackCount = students.filter((rawSt) => {
               const stData = getStudentTopicData(rawSt, tp);
-              return (
-                stData?.status === 'STAGE_1_SUBMITTED' ||
-                stData?.status === 'STAGE_2_SUBMITTED'
-              );
+              return isSubmittedWritingStatus(stData?.status);
             }).length;
 
             return (
@@ -1676,8 +1704,7 @@ export default function TeacherDashboard({
                   !q.resolved &&
                   q.resolved !== 'TRUE'
               ).length;
-              const isWaitingFeedback =
-                st.status === 'STAGE_1_SUBMITTED' || st.status === 'STAGE_2_SUBMITTED';
+              const isWaitingFeedback = isSubmittedWritingStatus(st.status);
               const priorityScore =
                 (unresolvedCount > 0 ? 200 : 0) + (isWaitingFeedback ? 100 : 0);
 
@@ -1710,13 +1737,8 @@ export default function TeacherDashboard({
             const renderStudentRow = ({ st, unresolvedCount, needsAction }) => {
               const isSelected = String(st.number) === String(selectedStudent?.number);
               const meta = STAGE_META[st.status] || STAGE_META.STAGE_1_WRITING;
-              const textLen = (
-                st.draft4 ||
-                st.draft3 ||
-                st.draft2 ||
-                st.draft1 ||
-                ''
-              ).trim().length;
+              const studentPages = getStudentDraftPages(st);
+              const textLen = (studentPages[studentPages.length - 1]?.text || '').trim().length;
 
               return (
                 <button
@@ -1920,7 +1942,11 @@ export default function TeacherDashboard({
                           }`}
                         >
                           {pg.label}
-                          {idx === draftPages.length - 1 ? ' (완성본)' : ''}
+                          {idx === draftPages.length - 1
+                            ? isSelectedStudentFinal
+                              ? ' (최종 완성본)'
+                              : ' (최신 수정본)'
+                            : ''}
                         </button>
                       ))}
                     </div>
@@ -2330,23 +2356,55 @@ export default function TeacherDashboard({
                   JSON.stringify(selectedStudent?.feedbackItems || []);
 
               return (
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   {hasUnsentFeedback && (
                     <div className="text-center text-xs font-bold text-[#B45309] bg-[#FEF3C7] border border-[#FCD34D] rounded-xl py-1.5 px-3">
                       새로 작성·수정한 첨삭이 있습니다. 아래 버튼을 눌러 전송해 주세요!
                     </div>
                   )}
-                  <button
-                    type="submit"
-                    className={`w-full h-13 text-sm sm:text-base font-bold flex items-center justify-center gap-2 rounded-2xl transition cursor-pointer ${
-                      hasUnsentFeedback
-                        ? 'bg-[#D97706] hover:bg-[#B45309] text-white border-2 border-[#92400E] shadow-md'
-                        : 'sketch-btn-primary'
-                    }`}
-                  >
-                    <HandDrawnCheckIcon size={18} color="#FFFFFF" />
-                    <span>학생 공책으로 첨삭 보내기</span>
-                  </button>
+                  {isSelectedStudentFinal ? (
+                    <div className="space-y-2">
+                      <div className="text-center text-xs font-bold text-[#1B4332] bg-[#D8F3DC] border border-[#52B788] rounded-xl py-2 px-3">
+                        이 글은 최종 완성본으로 확정되어 있습니다.
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleReopenWriting}
+                        className="w-full h-13 sketch-btn-secondary text-sm sm:text-base font-bold flex items-center justify-center gap-2"
+                      >
+                        <HandDrawnPencilIcon size={18} color="#1B4332" />
+                        <span>수정 다시 열기</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <button
+                        type="submit"
+                        className={`h-13 text-sm font-bold flex items-center justify-center gap-2 rounded-2xl transition cursor-pointer ${
+                          hasUnsentFeedback
+                            ? 'bg-[#D97706] hover:bg-[#B45309] text-white border-2 border-[#92400E] shadow-md'
+                            : 'sketch-btn-primary'
+                        }`}
+                      >
+                        <HandDrawnCheckIcon size={18} color="#FFFFFF" />
+                        <span>첨삭 보내고 수정 열기</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleFinalizeWriting}
+                        disabled={!canFinalizeSelectedStudent}
+                        className="h-13 rounded-2xl bg-[#D8F3DC] border-2 border-[#1B4332] text-[#1B4332] text-sm font-bold flex items-center justify-center gap-2 hover:bg-[#B7E4C7] transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                      >
+                        <HandDrawnCheckIcon size={18} color="#1B4332" />
+                        <span>최종 완성 처리</span>
+                      </button>
+                      {!canFinalizeSelectedStudent && draftPages.length > 0 && (
+                        <div className="sm:col-span-2 text-center text-[11px] text-[#64748B]">
+                          학생이 수정본을 제출하면 최종 완성 처리할 수 있습니다.
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -2388,7 +2446,8 @@ export default function TeacherDashboard({
             <div className="space-y-4">
               {topics.map((tp) => {
                 const stData = getStudentTopicData(portfolioStudent, tp);
-                const finalTxt = (stData?.draft3 || stData?.draft2 || stData?.draft1 || '').trim();
+                const topicPages = getStudentDraftPages(stData);
+                const finalTxt = (topicPages[topicPages.length - 1]?.text || '').trim();
                 return (
                   <div
                     key={tp.id}

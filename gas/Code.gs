@@ -371,6 +371,64 @@ function studentRefreshV2(payload) {
   };
 }
 
+function getDraftHistoryV2_(record) {
+  record = record || {};
+  if (Array.isArray(record.draftHistory) && record.draftHistory.length > 0) {
+    return record.draftHistory.filter(function(draft) {
+      return draft && draft.text && String(draft.text).trim();
+    });
+  }
+  var rawDrafts = [record.draft1, record.draft2, record.draft3, record.draft4, record.draft5]
+    .filter(function(text) {
+      return text && String(text).trim();
+    });
+  return rawDrafts.map(function(text, index) {
+      return {
+        round: index + 1,
+        label: String(index + 1) + '차 글',
+        text: text,
+        pieceTitle: record.pieceTitle || '',
+        teacherNote: index === rawDrafts.length - 1 ? record.teacherNote || '' : '',
+        feedbackItems: index === rawDrafts.length - 1 ? record.feedbackItems || [] : [],
+        updatedAt: record.updatedAt || '',
+        updatedAtIso: record.updatedAtIso || ''
+      };
+  });
+}
+
+function appendDraftRevisionV2_(record, text, pieceTitle, updatedAt, updatedAtIso) {
+  record = record || {};
+  var history = getDraftHistoryV2_(record).slice();
+  if (history.length > 0 && (record.teacherNote || (record.feedbackItems || []).length > 0)) {
+    var lastIndex = history.length - 1;
+    var previousLast = history[lastIndex];
+    history[lastIndex] = Object.assign({}, previousLast, {
+      teacherNote: record.teacherNote || previousLast.teacherNote || '',
+      feedbackItems: record.feedbackItems || previousLast.feedbackItems || []
+    });
+  }
+  var round = history.length + 1;
+  var nextRecord = Object.assign({}, record, {
+    status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
+    locked: true,
+    pieceTitle: pieceTitle,
+    draftHistory: history.concat([{
+      round: round,
+      label: String(round) + '차 글',
+      text: text,
+      pieceTitle: pieceTitle,
+      teacherNote: '',
+      feedbackItems: [],
+      updatedAt: updatedAt,
+      updatedAtIso: updatedAtIso
+    }]),
+    updatedAt: updatedAt,
+    updatedAtIso: updatedAtIso
+  });
+  if (round <= 5) nextRecord['draft' + round] = text;
+  return nextRecord;
+}
+
 function submitStageV2(payload) {
   const session = requireStudentSessionV2_(payload);
   const context = readAppStateV2_(session.spreadsheetId);
@@ -396,7 +454,6 @@ function submitStageV2(payload) {
     return { ok: false, error: '현재는 제출이 마감되어 있습니다. 선생님께 문의해 주세요.' };
   }
 
-  const stage = Math.max(1, Math.min(4, Number(payload.stage || 1)));
   const text = String(payload.text || '');
   const pieceTitle = String(payload.pieceTitle || '').trim();
   if (!pieceTitle) return { ok: false, error: '작품 제목을 먼저 지어 주세요.' };
@@ -404,31 +461,24 @@ function submitStageV2(payload) {
   if (!text.trim()) return { ok: false, error: '글을 먼저 작성해 주세요.' };
   if (text.length > 30000) return { ok: false, error: '글은 30,000자 이내로 작성해 주세요.' };
 
-  const nextStatus = stage === 1
-    ? 'STAGE_1_SUBMITTED'
-    : stage === 2
-    ? 'STAGE_2_SUBMITTED'
-    : 'STAGE_3_COMPLETED';
   const now = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd HH:mm');
   const nowIso = new Date().toISOString();
+  const submissionRecord = isActive ? student : (existingTopicRecord || {});
+  const submittedRecord = appendDraftRevisionV2_(
+    submissionRecord,
+    text,
+    pieceTitle,
+    now,
+    nowIso
+  );
   if (isActive) {
-    student.status = nextStatus;
-    student.locked = true;
-    student.pieceTitle = pieceTitle;
-    student['draft' + stage] = text;
+    Object.keys(submittedRecord).forEach(function(key) {
+      student[key] = submittedRecord[key];
+    });
     student.classId = session.classId;
-    student.updatedAt = now;
-    student.updatedAtIso = nowIso;
   } else {
     student.historyByTopic = student.historyByTopic || {};
-    const topicRecord = student.historyByTopic[topic.id] || {};
-    topicRecord.status = nextStatus;
-    topicRecord.pieceTitle = pieceTitle;
-    topicRecord['draft' + stage] = text;
-    topicRecord.locked = true;
-    topicRecord.updatedAt = now;
-    topicRecord.updatedAtIso = nowIso;
-    student.historyByTopic[topic.id] = topicRecord;
+    student.historyByTopic[topic.id] = submittedRecord;
     student.updatedAtIso = nowIso;
   }
 
@@ -444,10 +494,22 @@ function addQuestionV2(payload) {
   const questionText = String(payload.question || '').trim();
   if (!questionText) return { ok: false, error: '질문 내용을 적어 주세요.' };
   if (questionText.length > 1000) return { ok: false, error: '질문은 1,000자 이내로 작성해 주세요.' };
+  const requestId = String(payload.requestId || '').trim().slice(0, 120);
+  const existingQuestion = requestId ? state.questions.find(function(question) {
+    return String(question.id) === requestId &&
+      belongsToClassV2_(question, session.classId, state) &&
+      String(question.number).trim() === String(session.number).trim();
+  }) : null;
+  if (existingQuestion) {
+    return {
+      ok: true,
+      questions: questionsForStudentV2_(state, session.classId, session.number)
+    };
+  }
   const now = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd HH:mm');
   const nowIso = new Date().toISOString();
   state.questions.unshift({
-    id: 'Q_' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000),
+    id: requestId || 'Q_' + new Date().getTime() + '_' + Math.floor(Math.random() * 10000),
     classId: session.classId,
     topicId: String(payload.topicId || ''),
     number: session.number,
@@ -612,8 +674,7 @@ function submitStage(payload) {
       } catch (e) {}
 
       const nextStatus =
-        stage === 1 ? 'STAGE_1_SUBMITTED' :
-        stage === 2 ? 'STAGE_2_SUBMITTED' : 'STAGE_3_COMPLETED';
+        stage === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED';
 
       studentSheet.getRange(i + 1, 5).setValue(nextStatus);
       studentSheet.getRange(i + 1, 6).setValue('TRUE');
@@ -808,7 +869,13 @@ function addQuestion(payload) {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const questionSheet = ss.getSheetByName('Questions');
   const now = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd HH:mm');
-  const id = 'Q_' + new Date().getTime();
+  const id = String(payload.requestId || '').trim().slice(0, 120) ||
+    'Q_' + new Date().getTime();
+
+  const existingIds = questionSheet.getDataRange().getValues().slice(1).map(function(row) {
+    return String(row[0] || '');
+  });
+  if (existingIds.indexOf(id) >= 0) return initSheetsAndGetData();
 
   questionSheet.appendRow([
     id,

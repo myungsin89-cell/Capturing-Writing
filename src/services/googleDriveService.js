@@ -413,6 +413,32 @@ function mergeNewerRemoteRecords(localRecords = [], remoteRecords = []) {
   });
 }
 
+function dedupeStoredQuestions(items = []) {
+  const seenIds = new Set();
+  const recentByContent = new Map();
+  return items.filter((question) => {
+    const id = String(question?.id || '');
+    if (id && seenIds.has(id)) return false;
+    if (id) seenIds.add(id);
+    if (question?.resolved === true || question?.resolved === 'TRUE') return true;
+    const signature = [
+      question?.classId || '',
+      question?.topicId || '',
+      question?.number || '',
+      String(question?.question || '').trim(),
+      String(question?.quote || '').trim()
+    ].join('::');
+    const timestamp =
+      Date.parse(question?.createdAtIso || question?.updatedAtIso || question?.createdAt || '') || 0;
+    const previousTimestamp = recentByContent.get(signature);
+    if (timestamp && previousTimestamp && Math.abs(timestamp - previousTimestamp) <= 30000) {
+      return false;
+    }
+    if (timestamp) recentByContent.set(signature, timestamp);
+    return true;
+  });
+}
+
 function mergeQuestions(localQuestions = [], remoteQuestions = []) {
   const merged = new Map(remoteQuestions.map((question) => [String(question.id), question]));
   localQuestions.forEach((question) => {
@@ -421,7 +447,7 @@ function mergeQuestions(localQuestions = [], remoteQuestions = []) {
     const nextTime = Date.parse(question.updatedAtIso || question.createdAtIso || '') || 0;
     if (!previous || nextTime >= previousTime) merged.set(String(question.id), question);
   });
-  return Array.from(merged.values());
+  return dedupeStoredQuestions(Array.from(merged.values()));
 }
 
 /**
@@ -437,7 +463,7 @@ export async function saveFullStateToSpreadsheet(
   await ensureStudentSheetPermission(accessToken, spreadsheetId);
 
   let safeStudents = students || [];
-  let safeQuestions = questions || [];
+  let safeQuestions = dedupeStoredQuestions(questions || []);
   if (!replaceRemoteRecords) {
     try {
       const remote = await loadFullStateFromSpreadsheet(accessToken, spreadsheetId);
@@ -543,6 +569,65 @@ export async function saveFullStateToSpreadsheet(
   }
 }
 
+function getStoredDraftHistory(record = {}) {
+  if (Array.isArray(record.draftHistory) && record.draftHistory.length > 0) {
+    return record.draftHistory.filter((draft) => draft?.text && String(draft.text).trim());
+  }
+  const rawDrafts = [record.draft1, record.draft2, record.draft3, record.draft4, record.draft5]
+    .filter((text) => text && String(text).trim());
+  return rawDrafts.map((text, index) => ({
+      round: index + 1,
+      label: `${index + 1}차 글`,
+      text,
+      pieceTitle: record.pieceTitle || '',
+      teacherNote: index === rawDrafts.length - 1 ? record.teacherNote || '' : '',
+      feedbackItems: index === rawDrafts.length - 1 ? record.feedbackItems || [] : [],
+      updatedAt: record.updatedAt || '',
+      updatedAtIso: record.updatedAtIso || ''
+  }));
+}
+
+function appendStoredDraftRevision(record = {}, text, pieceTitle, updatedAt, updatedAtIso) {
+  const history = getStoredDraftHistory(record);
+  if (history.length > 0 && (record.teacherNote || record.feedbackItems?.length)) {
+    const lastIndex = history.length - 1;
+    history[lastIndex] = {
+      ...history[lastIndex],
+      teacherNote: record.teacherNote || history[lastIndex].teacherNote || '',
+      feedbackItems: record.feedbackItems || history[lastIndex].feedbackItems || []
+    };
+  }
+  const round = history.length + 1;
+  const nextRecord = {
+    ...record,
+    status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
+    locked: true,
+    pieceTitle,
+    draftHistory: [
+      ...history,
+      {
+        round,
+        label: `${round}차 글`,
+        text,
+        pieceTitle,
+        teacherNote: '',
+        feedbackItems: [],
+        updatedAt,
+        updatedAtIso
+      }
+    ],
+    updatedAt,
+    updatedAtIso
+  };
+  if (round <= 5) nextRecord[`draft${round}`] = text;
+  return nextRecord;
+}
+
+function getStoredLatestDraftText(record = {}) {
+  const history = getStoredDraftHistory(record);
+  return history[history.length - 1]?.text || record.draft5 || record.draft4 || record.draft3 || record.draft2 || record.draft1 || '';
+}
+
 /**
  * 학생별 Google Docs 자동 생성 (또는 기존 독스 초기화) 및 학생 최신 본문 동기화
  */
@@ -553,8 +638,7 @@ export async function ensureAndSyncStudentGoogleDoc(
   if (!accessToken || !student) return null;
 
   const targetFolderId = folderId || (await ensureRootFolder(accessToken));
-  const latestText =
-    student.draft4 || student.draft3 || student.draft2 || student.draft1 || '';
+  const latestText = getStoredLatestDraftText(student);
   const pieceTitle = student.pieceTitle || topicTitle || '제목 없음';
 
   let docId = student.docId;
@@ -1165,7 +1249,6 @@ export async function callDirectSheetStudentApi(payload = {}) {
         };
       }
 
-      const stage = Math.max(1, Math.min(4, Number(payload.stage || 1)));
       const text = String(payload.text || '');
       const pieceTitle = String(payload.pieceTitle || '').trim();
       if (!pieceTitle) return { ok: false, error: '작품 제목을 먼저 지어 주세요.' };
@@ -1177,38 +1260,27 @@ export async function callDirectSheetStudentApi(payload = {}) {
         return { ok: false, error: '글은 30,000자 이내로 작성해 주세요.' };
       }
 
-      const nextStatus =
-        stage === 1
-          ? 'STAGE_1_SUBMITTED'
-          : stage === 2
-          ? 'STAGE_2_SUBMITTED'
-          : 'STAGE_3_COMPLETED';
       const now = new Date().toLocaleTimeString('ko-KR', {
         hour: '2-digit',
         minute: '2-digit'
       });
       const nowIso = new Date().toISOString();
+      const submissionRecord = isActive ? student : existingTopicRecord || {};
+      const stage = getStoredDraftHistory(submissionRecord).length + 1;
+      const submittedRecord = appendStoredDraftRevision(
+        submissionRecord,
+        text,
+        pieceTitle,
+        `오늘 ${now}`,
+        nowIso
+      );
 
       if (isActive) {
-        student.status = nextStatus;
-        student.locked = true;
-        student.pieceTitle = pieceTitle;
-        student[`draft${stage}`] = text;
-        student.classId = classId;
-        student.updatedAt = `오늘 ${now}`;
-        student.updatedAtIso = nowIso;
+        Object.assign(student, submittedRecord, { classId });
       } else if (topic) {
         student.historyByTopic = {
           ...(student.historyByTopic || {}),
-          [topic.id]: {
-            ...(student.historyByTopic?.[topic.id] || {}),
-            status: nextStatus,
-            pieceTitle,
-            [`draft${stage}`]: text,
-            locked: true,
-            updatedAt: `오늘 ${now}`,
-            updatedAtIso: nowIso
-          }
+          [topic.id]: submittedRecord
         };
         student.updatedAtIso = nowIso;
       }
@@ -1250,9 +1322,24 @@ export async function callDirectSheetStudentApi(payload = {}) {
       if (questionText.length > 1000) {
         return { ok: false, error: '질문은 1,000자 이내로 작성해 주세요.' };
       }
+      const requestId = String(payload.requestId || '').trim().slice(0, 120);
+      const existingQuestion = requestId
+        ? state.questions.find(
+            (question) =>
+              String(question.id) === requestId &&
+              belongsToClass(question, classId) &&
+              String(question.number).trim() === String(number).trim()
+          )
+        : null;
+      if (existingQuestion) {
+        return {
+          ok: true,
+          questions: questionsForStudent(classId, number)
+        };
+      }
       const nowIso = new Date().toISOString();
       const newQ = {
-        id: `Q_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
+        id: requestId || `Q_${Date.now()}_${Math.floor(Math.random() * 10000)}`,
         classId,
         topicId: String(payload.topicId || ''),
         number,

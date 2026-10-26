@@ -64,6 +64,96 @@ function mergeLatestByKey(localItems = [], remoteItems = [], keyOf) {
   return changed ? Array.from(merged.values()) : localItems;
 }
 
+function dedupeQuestions(items = []) {
+  const seenIds = new Set();
+  const recentByContent = new Map();
+  return items.filter((question) => {
+    const id = String(question?.id || '');
+    if (id && seenIds.has(id)) return false;
+    if (id) seenIds.add(id);
+
+    const isResolved = question?.resolved === true || question?.resolved === 'TRUE';
+    if (isResolved) return true;
+    const signature = [
+      question?.classId || '',
+      question?.topicId || '',
+      question?.number || '',
+      String(question?.question || '').trim(),
+      String(question?.quote || '').trim()
+    ].join('::');
+    const timestamp =
+      Date.parse(question?.createdAtIso || question?.updatedAtIso || question?.createdAt || '') || 0;
+    const previousTimestamp = recentByContent.get(signature);
+    if (timestamp && previousTimestamp && Math.abs(timestamp - previousTimestamp) <= 30000) {
+      return false;
+    }
+    if (timestamp) recentByContent.set(signature, timestamp);
+    return true;
+  });
+}
+
+function getDraftHistory(record = {}) {
+  if (Array.isArray(record.draftHistory) && record.draftHistory.length > 0) {
+    return record.draftHistory.filter((draft) => draft?.text && String(draft.text).trim());
+  }
+
+  const rawDrafts = [record.draft1, record.draft2, record.draft3, record.draft4, record.draft5]
+    .filter((text) => text && String(text).trim());
+  return rawDrafts.map((text, index) => ({
+      round: index + 1,
+      label: `${index + 1}차 글`,
+      text,
+      pieceTitle: record.pieceTitle || '',
+      teacherNote: index === rawDrafts.length - 1 ? record.teacherNote || '' : '',
+      feedbackItems: index === rawDrafts.length - 1 ? record.feedbackItems || [] : [],
+      updatedAt: record.updatedAt || '',
+      updatedAtIso: record.updatedAtIso || ''
+  }));
+}
+
+function appendDraftRevision(record = {}, text, pieceTitle, updatedAt, updatedAtIso) {
+  const history = getDraftHistory(record);
+  if (history.length > 0 && (record.teacherNote || record.feedbackItems?.length)) {
+    const lastIndex = history.length - 1;
+    history[lastIndex] = {
+      ...history[lastIndex],
+      teacherNote: record.teacherNote || history[lastIndex].teacherNote || '',
+      feedbackItems: record.feedbackItems || history[lastIndex].feedbackItems || []
+    };
+  }
+
+  const round = history.length + 1;
+  const nextRecord = {
+    ...record,
+    status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
+    locked: true,
+    pieceTitle,
+    draftHistory: [
+      ...history,
+      {
+        round,
+        label: `${round}차 글`,
+        text,
+        pieceTitle,
+        teacherNote: '',
+        feedbackItems: [],
+        updatedAt,
+        updatedAtIso
+      }
+    ],
+    updatedAt,
+    updatedAtIso
+  };
+
+  if (round <= 5) nextRecord[`draft${round}`] = text;
+  return nextRecord;
+}
+
+function getLatestDraftText(record = {}) {
+  const history = getDraftHistory(record);
+  return history[history.length - 1]?.text || record.draft5 || record.draft4 || record.draft3 || record.draft2 || record.draft1 || '';
+}
+
 export default function App() {
   // URL 파라미터 확인 (?student=1&sheetId=... 로 접속한 학생 태블릿인지 판별)
   const urlParams =
@@ -189,7 +279,7 @@ export default function App() {
   const [questions, setQuestions] = useState(() => {
     if (isStudentUrlMode) return [];
     const saved = localStorage.getItem(STORAGE_KEYS.QUESTIONS);
-    return saved ? JSON.parse(saved) : [];
+    return saved ? dedupeQuestions(JSON.parse(saved)) : [];
   });
 
   const legacyClassId = classes[0]?.id || config.activeClassId || '';
@@ -367,7 +457,9 @@ export default function App() {
           )
         );
         setQuestions((prev) =>
-          mergeLatestByKey(prev, remoteQuestions, (question) => String(question.id))
+          dedupeQuestions(
+            mergeLatestByKey(prev, remoteQuestions, (question) => String(question.id))
+          )
         );
       } catch (e) {
         console.warn('학생 제출 자동 확인 참고:', e);
@@ -450,7 +542,8 @@ export default function App() {
         setClasses(loadedClasses);
         setTopics(loadedTopics);
         setStudents(loadedStudents);
-        setQuestions(loadedQuestions);
+        const dedupedLoadedQuestions = dedupeQuestions(loadedQuestions);
+        setQuestions(dedupedLoadedQuestions);
         remoteGasUrl = loaded.config?.gasUrl || '';
         if (remoteGasUrl) {
           setGasUrl(remoteGasUrl);
@@ -462,7 +555,7 @@ export default function App() {
           classes: loadedClasses,
           topics: loadedTopics,
           students: loadedStudents,
-          questions: loadedQuestions,
+          questions: dedupedLoadedQuestions,
           config: loadedConfig,
           replaceRemoteRecords: migration.migrated
         });
@@ -612,7 +705,7 @@ export default function App() {
     };
     setStudentSession(nextSession);
     setStudents([data.student]);
-    setQuestions(Array.isArray(data.questions) ? data.questions : []);
+    setQuestions(dedupeQuestions(Array.isArray(data.questions) ? data.questions : []));
     if (Array.isArray(data.topics)) setTopics(data.topics);
     if (data.config) setConfig((prev) => ({ ...prev, ...data.config }));
     setActiveStudent(data.student);
@@ -639,7 +732,7 @@ export default function App() {
       if (!cancelled && data?.ok && data.student) {
         setStudents([data.student]);
         setActiveStudent(data.student);
-        setQuestions(Array.isArray(data.questions) ? data.questions : []);
+        setQuestions(dedupeQuestions(Array.isArray(data.questions) ? data.questions : []));
         if (Array.isArray(data.topics)) setTopics(data.topics);
         if (data.config) setConfig((prev) => ({ ...prev, ...data.config }));
       } else if (!cancelled && data && !data.ok) {
@@ -673,26 +766,9 @@ export default function App() {
     const updateLocalStudent = () => setStudents((prev) =>
       prev.map((st) => {
         if (!belongsToActiveClass(st) || String(st.number) !== String(studentNumber)) return st;
-        const nextStatus =
-          stage === 1
-            ? 'STAGE_1_SUBMITTED'
-            : stage === 2
-            ? 'STAGE_2_SUBMITTED'
-            : 'STAGE_3_COMPLETED';
 
         if (isActive) {
-          return {
-            ...st,
-            status: nextStatus,
-            locked: true,
-            pieceTitle: cleanPieceTitle,
-            draft1: stage === 1 ? text : st.draft1,
-            draft2: stage === 2 ? text : st.draft2,
-            draft3: stage === 3 ? text : st.draft3,
-            draft4: stage >= 4 ? text : st.draft4,
-            updatedAt: `오늘 ${now}`,
-            updatedAtIso: nowIso
-          };
+          return appendDraftRevision(st, text, cleanPieceTitle, `오늘 ${now}`, nowIso);
         }
 
         const prevTopicData = st.historyByTopic?.[topicId] || {};
@@ -700,18 +776,13 @@ export default function App() {
           ...st,
           historyByTopic: {
             ...(st.historyByTopic || {}),
-            [topicId]: {
-              ...prevTopicData,
-              status: nextStatus,
-              locked: true,
-              pieceTitle: cleanPieceTitle,
-              draft1: stage === 1 ? text : prevTopicData.draft1,
-              draft2: stage === 2 ? text : prevTopicData.draft2,
-              draft3: stage === 3 ? text : prevTopicData.draft3,
-              draft4: stage >= 4 ? text : prevTopicData.draft4,
-              updatedAt: `오늘 ${now}`,
-              updatedAtIso: nowIso
-            }
+            [topicId]: appendDraftRevision(
+              prevTopicData,
+              text,
+              cleanPieceTitle,
+              `오늘 ${now}`,
+              nowIso
+            )
           },
           updatedAtIso: nowIso
         };
@@ -740,8 +811,11 @@ export default function App() {
   };
 
   const handleAddQuestion = async (qPayload) => {
+    const requestId =
+      qPayload.requestId ||
+      `Q_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
     const newQ = {
-      id: 'Q_' + Date.now(),
+      id: requestId,
       classId: activeClassId,
       topicId: qPayload.topicId || config.activeTopicId || '',
       number: qPayload.number,
@@ -761,12 +835,13 @@ export default function App() {
         sessionToken: studentSession?.token || '',
         topicId: qPayload.topicId || config.activeTopicId || '',
         question: qPayload.question,
-        quote: qPayload.quote || ''
+        quote: qPayload.quote || '',
+        requestId
       });
       if (!data?.ok) {
         return { ok: false, error: data?.error || '질문 전송에 실패했습니다.' };
       }
-      if (Array.isArray(data.questions)) setQuestions(data.questions);
+      if (Array.isArray(data.questions)) setQuestions(dedupeQuestions(data.questions));
       return { ok: true };
     }
 
@@ -831,12 +906,7 @@ export default function App() {
     // 교사가 [첨삭 완료 및 학생에게 전송] 시, 학생 구글 독스의 이전 Brisk 표/댓글을 자동으로 깨끗하게 청소!
     const targetDocId = targetTopicData?.docId || targetSt?.docId;
     if (status === 'FEEDBACK_DONE' && googleAuth?.accessToken && targetDocId) {
-      const latestText =
-        targetTopicData?.draft4 ||
-        targetTopicData?.draft3 ||
-        targetTopicData?.draft2 ||
-        targetTopicData?.draft1 ||
-        '';
+      const latestText = getLatestDraftText(targetTopicData);
       const targetTopicTitle = topics.find((topic) => topic.id === targetTopicId)?.title || '';
       resetGoogleDocWithStudentText(googleAuth.accessToken, targetDocId, latestText, {
         pieceTitle: targetTopicData?.pieceTitle || targetTopicTitle,
@@ -1358,12 +1428,7 @@ export default function App() {
         !String(targetDocId).startsWith('DEMO_')
       ) {
         try {
-          const currentText =
-            targetTopicData?.draft4 ||
-            targetTopicData?.draft3 ||
-            targetTopicData?.draft2 ||
-            targetTopicData?.draft1 ||
-            '';
+          const currentText = getLatestDraftText(targetTopicData);
           const directRes = await pullBriskFeedbackFromGoogleDoc(
             googleAuth.accessToken,
             targetDocId,

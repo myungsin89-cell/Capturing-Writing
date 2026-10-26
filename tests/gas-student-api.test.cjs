@@ -206,6 +206,48 @@ test('학생 제출은 세션 소유 학생만 갱신한다', () => {
   assert.equal(state.students[1].draft1, '다른 학생 글');
 });
 
+test('여러 번 고쳐 쓴 글은 차수별로 누적되고 자동으로 최종 완성되지 않는다', () => {
+  const { context } = makeHarness();
+  const login = context.studentLoginV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    classId: 'CLASS_A',
+    accessKey: 'class-secret',
+    number: '1',
+    name: '가학생'
+  });
+
+  const submit = (stage, text) =>
+    context.submitStageV2({
+      spreadsheetId: 'spreadsheet-id-1234567890',
+      sessionToken: login.sessionToken,
+      topicId: 'TOPIC_A',
+      stage,
+      pieceTitle: '계속 자라는 글',
+      text
+    });
+  const reopen = () => {
+    const stateContext = context.readAppStateV2_('spreadsheet-id-1234567890');
+    stateContext.state.students[0].status = 'FEEDBACK_DONE';
+    stateContext.state.students[0].locked = false;
+    context.writeAppStateV2_(stateContext);
+  };
+
+  assert.equal(submit(1, '첫 번째 글').ok, true);
+  reopen();
+  assert.equal(submit(2, '두 번째 글').ok, true);
+  reopen();
+  const third = submit(3, '세 번째 글');
+
+  assert.equal(third.ok, true);
+  assert.equal(third.student.status, 'REVISION_SUBMITTED');
+  assert.equal(third.student.locked, true);
+  assert.deepEqual(
+    Array.from(third.student.draftHistory, (draft) => draft.text),
+    ['첫 번째 글', '두 번째 글', '세 번째 글']
+  );
+  assert.notEqual(third.student.status, 'FINAL_COMPLETED');
+});
+
 test('작품 제목이 없는 학생 글은 제출하지 않는다', () => {
   const { context } = makeHarness();
   const login = context.studentLoginV2({
@@ -246,6 +288,32 @@ test('학생 질문은 세션의 학급·번호·이름으로 저장된다', () 
   assert.equal(result.questions[0].number, '1');
   assert.equal(result.questions[0].classId, 'CLASS_A');
   assert.equal(result.questions[0].topicId, 'TOPIC_A');
+});
+
+test('같은 질문 전송 요청이 재시도되어도 한 번만 저장된다', () => {
+  const { context } = makeHarness();
+  const login = context.studentLoginV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    classId: 'CLASS_A',
+    accessKey: 'class-secret',
+    number: '1',
+    name: '가학생'
+  });
+  const payload = {
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    sessionToken: login.sessionToken,
+    topicId: 'TOPIC_A',
+    requestId: 'Q_CLIENT_REQUEST_1',
+    question: '같은 질문이 두 번 저장되나요?'
+  };
+
+  const first = context.addQuestionV2(payload);
+  const retried = context.addQuestionV2(payload);
+
+  assert.equal(first.ok, true);
+  assert.equal(retried.ok, true);
+  assert.equal(retried.questions.length, 1);
+  assert.equal(retried.questions[0].id, 'Q_CLIENT_REQUEST_1');
 });
 
 test('긴 학생 입장 주소를 자르지 않고 QR로 만든다', async () => {
