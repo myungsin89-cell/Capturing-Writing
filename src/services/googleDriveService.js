@@ -709,7 +709,7 @@ export async function ensureAndSyncStudentGoogleDoc(
 
 /**
  * 구글 독스 안의 이전 Brisk 첨삭 표/문단/댓글을 지우고 작품 제목·이름·학생 본문만 남깁니다.
- * Drive API media upload 방식을 우선 사용하여 이전 Brisk 테이블 경계 충돌로 인한 빈 문서 오류를 완벽히 방지합니다.
+ * 표(Table)와 문단을 역순으로 안전하게 삭제하여 테이블 경계 충돌 없이 본문을 깔끔하게 교체합니다.
  */
 export async function resetGoogleDocWithStudentText(
   accessToken,
@@ -723,93 +723,43 @@ export async function resetGoogleDocWithStudentText(
   const cleanAuthor = String(authorName || '').trim();
   const rawBody = String(studentText || '').replace(/\r\n/g, '\n').trim();
 
-  // 1순위: Google Drive API uploadType=media (HTML)로 이전 Brisk 표·서식·댓글을 깨끗이 날리고 새 글로 교체
-  try {
-    const paragraphsHtml = rawBody
-      ? rawBody
-          .split('\n')
-          .map((line) => {
-            const escaped = line
-              .replace(/&/g, '&amp;')
-              .replace(/</g, '&lt;')
-              .replace(/>/g, '&gt;');
-            return `<p style="font-size:12pt;line-height:1.8;margin:0 0 12px 0;">${escaped || '&nbsp;'}</p>`;
-          })
-          .join('')
-      : '<p style="font-size:12pt;color:#94a3b8;">(작성된 글 본문이 비어 있습니다)</p>';
-
-    const htmlContent = `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body style="font-family:'Pretendard', sans-serif; color:#1E293B; padding:20px;">
-  <p style="font-size:1pt; color:#ffffff; margin:0;">${STUDENT_TEXT_MARKER}</p>
-  <h1 style="text-align:center; font-size:22pt; font-weight:bold; margin:0 0 16px 0;">${cleanTitle.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</h1>
-  <p style="text-align:right; font-size:13pt; font-weight:bold; color:#475569; margin:0 0 32px 0;">${cleanAuthor.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</p>
-  <div style="margin-top:20px;">
-    ${paragraphsHtml}
-  </div>
-</body>
-</html>`;
-
-    const res = await fetch(
-      `https://www.googleapis.com/upload/drive/v3/files/${docId}?uploadType=media`,
-      {
-        method: 'PATCH',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'text/html;charset=utf-8'
-        },
-        body: htmlContent
-      }
-    );
-
-    if (res.ok) {
-      // 이전 차수 구글 독스 댓글 정리
-      try {
-        const commentsRes = await googleFetch(
-          `https://www.googleapis.com/drive/v3/files/${docId}/comments?fields=comments(id,deleted)`,
-          accessToken
-        );
-        const comments = commentsRes?.comments || [];
-        for (const c of comments) {
-          if (!c.deleted) {
-            googleFetch(
-              `https://www.googleapis.com/drive/v3/files/${docId}/comments/${c.id}`,
-              accessToken,
-              { method: 'DELETE' }
-            ).catch(() => {});
-          }
-        }
-      } catch (e) {}
-      return;
-    }
-  } catch (err) {
-    console.warn('Drive media 업로드 실패, Docs batchUpdate 방식으로 폴백합니다:', err);
-  }
-
-  // 2순위 폴백: Google Docs batchUpdate 방식
   try {
     const doc = await googleFetch(
       `https://docs.googleapis.com/v1/documents/${docId}`,
       accessToken
     );
     const content = doc.body?.content || [];
-    const lastElem = content[content.length - 1];
-    const endIndex = (lastElem?.endIndex || 2) - 1;
-
     const requests = [];
-    if (endIndex > 1) {
-      requests.push({
-        deleteContentRange: {
-          range: { startIndex: 1, endIndex }
+
+    // 역순으로 각 요소(표, 문단)를 삭제하여 테이블 경계 충돌 없이 깨끗이 비웁니다.
+    for (let i = content.length - 1; i >= 0; i--) {
+      const elem = content[i];
+      if (i === content.length - 1) {
+        // 구글 독스의 맨 마지막 문단(맨 끝 줄바꿈 \n)은 삭제할 수 없으므로, 그 앞까지만 삭제
+        if (elem.endIndex - 1 > elem.startIndex) {
+          requests.push({
+            deleteContentRange: {
+              range: { startIndex: elem.startIndex, endIndex: elem.endIndex - 1 }
+            }
+          });
         }
-      });
+      } else {
+        // 테이블이나 이전 문단 전체를 통째로 안전하게 삭제
+        if (elem.endIndex > elem.startIndex) {
+          requests.push({
+            deleteContentRange: {
+              range: { startIndex: elem.startIndex, endIndex: elem.endIndex }
+            }
+          });
+        }
+      }
     }
 
     const markerLine = `${STUDENT_TEXT_MARKER}\n`;
     const titleLine = `${cleanTitle}\n`;
     const authorLine = `${cleanAuthor ? cleanAuthor + '\n' : ''}`;
     const cleanBody = `${markerLine}${titleLine}${authorLine}\n${rawBody}\n`;
+
     requests.push({
       insertText: {
         location: { index: 1 },
@@ -817,16 +767,36 @@ export async function resetGoogleDocWithStudentText(
       }
     });
 
-    await googleFetch(
-      `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`,
-      accessToken,
-      {
-        method: 'POST',
-        body: JSON.stringify({ requests })
+    if (requests.length > 0) {
+      await googleFetch(
+        `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`,
+        accessToken,
+        {
+          method: 'POST',
+          body: JSON.stringify({ requests })
+        }
+      );
+    }
+
+    // 이전 차수 구글 독스 댓글 비동기 정리
+    try {
+      const commentsRes = await googleFetch(
+        `https://www.googleapis.com/drive/v3/files/${docId}/comments?fields=comments(id,deleted)`,
+        accessToken
+      );
+      const comments = commentsRes?.comments || [];
+      for (const c of comments) {
+        if (!c.deleted) {
+          googleFetch(
+            `https://www.googleapis.com/drive/v3/files/${docId}/comments/${c.id}`,
+            accessToken,
+            { method: 'DELETE' }
+          ).catch(() => {});
+        }
       }
-    );
-  } catch (e) {
-    console.warn('Google Doc 본문 리셋 참고:', e);
+    } catch (e) {}
+  } catch (err) {
+    console.warn('Google Doc 본문 리셋 참고:', err);
   }
 }
 

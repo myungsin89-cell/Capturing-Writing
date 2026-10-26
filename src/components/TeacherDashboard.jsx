@@ -324,11 +324,22 @@ export default function TeacherDashboard({
   const handleOpenDocWithBrisk = async (st) => {
     // 1. 브라우저 팝업 차단을 방지하기 위해 사용자 클릭 직후 빈 탭을 동기적으로 먼저 확보합니다!
     const newTab = window.open('about:blank', '_blank');
-    if (newTab) {
+    if (newTab && newTab.document) {
       try {
-        newTab.document.write(
-          `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${st.name} 학생 구글 독스 준비 중</title></head><body style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;font-family:-apple-system,BlinkMacSystemFont,'Pretendard',sans-serif;color:#1B4332;background:#F8FAFC;"><div style="background:white;padding:36px;border-radius:18px;border:1px solid #CBD5E1;box-shadow:0 4px 12px rgba(0,0,0,0.05);text-align:center;"><h2 style="margin:0 0 10px 0;font-size:20px;">${st.name} 학생의 구글 독스를 준비하고 있습니다...</h2><p style="margin:0;color:#64748B;font-size:14px;">최신 본문 동기화가 끝나면 곧바로 문서로 이동합니다.</p></div></body></html>`
-        );
+        newTab.document.title = `${st.name} 학생 구글 독스 준비 중 - 쓰담`;
+        if (newTab.document.body) {
+          newTab.document.body.style.cssText =
+            'display:flex;flex-direction:column;align-items:center;justify-content:center;height:90vh;font-family:-apple-system,BlinkMacSystemFont,"Pretendard",sans-serif;color:#1B4332;background:#F8FAFC;margin:0;';
+          newTab.document.body.innerHTML = `
+            <div style="background:white;padding:36px 40px;border-radius:20px;border:1px solid #CBD5E1;box-shadow:0 10px 25px rgba(0,0,0,0.06);text-align:center;max-width:440px;">
+              <div style="width:40px;height:40px;margin:0 auto 16px;border:4px solid #E2E8F0;border-top-color:#2D6A4F;border-radius:50%;animation:spin 1s linear infinite;"></div>
+              <style>@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }</style>
+              <h2 style="margin:0 0 10px 0;font-size:19px;color:#0F172A;">${st.name} 학생의 구글 독스를 준비하고 있습니다...</h2>
+              <p style="margin:0 0 16px 0;color:#64748B;font-size:14px;line-height:1.5;">최신 본문 동기화가 끝나면 자동으로 문서로 이동합니다.</p>
+              <a id="sseudam-doc-btn" href="#" style="display:none;padding:10px 20px;background:#2D6A4F;color:white;text-decoration:none;border-radius:10px;font-weight:bold;font-size:14px;">구글 독스로 직접 이동하기 &rarr;</a>
+            </div>
+          `;
+        }
       } catch (e) {}
     }
 
@@ -341,12 +352,18 @@ export default function TeacherDashboard({
 
     if (onEnsureStudentDoc) {
       showToast(`${st.name} 학생 구글 독스에 최신 본문을 동기화하고 있습니다...`);
-      const textToSync = currentStudentText || '';
-      const titleToSync = st.pieceTitle || currentTopic?.title || '글쓰기 공책';
-      const ensured = await onEnsureStudentDoc(st, currentTopic, textToSync, titleToSync);
-      if (ensured && ensured.docId) {
-        targetDocId = ensured.docId;
-        targetDocUrl = ensured.docUrl;
+      try {
+        const textToSync = currentStudentText || st?.text || '';
+        const titleToSync = st?.pieceTitle || currentTopic?.title || '글쓰기 공책';
+        const syncPromise = onEnsureStudentDoc(st, currentTopic, textToSync, titleToSync);
+        const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 7000));
+        const ensured = await Promise.race([syncPromise, timeoutPromise]);
+        if (ensured && ensured.docId) {
+          targetDocId = ensured.docId;
+          targetDocUrl = ensured.docUrl;
+        }
+      } catch (err) {
+        console.warn('독스 동기화 확인 참고:', err);
       }
     }
 
@@ -356,9 +373,30 @@ export default function TeacherDashboard({
         : targetDocUrl || 'https://docs.google.com/document/u/0/';
 
     // 2. 준비된 탭의 주소를 해당 학생의 구글 독스 URL로 변경
+    let navigated = false;
     if (newTab && !newTab.closed) {
-      newTab.location.href = targetUrl;
-    } else {
+      try {
+        const btn = newTab.document.getElementById('sseudam-doc-btn');
+        if (btn) {
+          btn.href = targetUrl;
+          btn.style.display = 'inline-block';
+        }
+      } catch (e) {}
+
+      try {
+        newTab.location.replace(targetUrl);
+        navigated = true;
+      } catch (e) {
+        try {
+          newTab.location.href = targetUrl;
+          navigated = true;
+        } catch (err) {
+          console.warn('새 탭 주소 이동 예외:', err);
+        }
+      }
+    }
+
+    if (!navigated && (!newTab || newTab.closed)) {
       window.open(targetUrl, '_blank', 'noopener,noreferrer');
     }
 
