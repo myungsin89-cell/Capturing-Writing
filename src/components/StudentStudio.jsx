@@ -68,6 +68,10 @@ export default function StudentStudio({
   const textareaRef = useRef(null);
   const questionSubmittingRef = useRef(false);
 
+  const currentStudent =
+    students.find((s) => String(s.number) === String(activeStudent?.number)) ||
+    activeStudent;
+
   // 구글 시트 요청 없이 기기 브라우저(localStorage)에만 안전하게 보관하는 키
   const getDraftStorageKey = useCallback(
     (topicId) => {
@@ -76,10 +80,6 @@ export default function StudentStudio({
     },
     [currentStudent?.number]
   );
-
-  const currentStudent =
-    students.find((s) => String(s.number) === String(activeStudent?.number)) ||
-    activeStudent;
 
   // 학생은 책장부터, 교사 미리보기는 선택한 주제 공책부터 바로 보여줍니다.
   useEffect(() => {
