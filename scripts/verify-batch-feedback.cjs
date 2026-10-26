@@ -89,6 +89,12 @@ async function main() {
     return route.abort();
   });
   await context.addInitScript(({ seed }) => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (text) => {
+        if (window.qaDenyClipboard) throw new Error('clipboard denied for verification');
+        window.qaCopiedFeedback = text;
+      }
+    } });
     if (localStorage.getItem('qa_seeded')) return;
     for (const [key, value] of Object.entries(seed)) {
       localStorage.setItem(`sseudam_${key}_v7`, JSON.stringify(value));
@@ -114,6 +120,18 @@ async function main() {
     await page.getByText('이 주제의 피드백 기준을 저장했습니다.', { exact: false }).waitFor();
     assert.equal(state.topics.find((item) => item.id === topic.id).feedbackCriteria.goal, '생생한 장면 쓰기');
     assert.equal(state.topics.find((item) => item.id === 'QA_OLD').feedbackCriteria.goal, '자세한 장면');
+    await page.getByRole('button', { name: '이 주제 기준 복사', exact: true }).click();
+    const personalPrompt = await page.evaluate(() => window.qaCopiedFeedback);
+    for (const part of ['생생한 경험 쓰기', '생생한 장면 쓰기', '순서\n생각과 느낌', '잘한 점 1개, 고칠 점 1개']) assert.ok(personalPrompt.includes(part));
+    await page.evaluate(() => { window.qaDenyClipboard = true; });
+    await page.getByRole('button', { name: '이 주제 기준 복사', exact: true }).click();
+    const manualCopy = page.getByLabel('개인 첨삭에 복사할 주제 기준', { exact: true });
+    await manualCopy.waitFor({ state: 'visible' });
+    assert.equal(await manualCopy.inputValue(), personalPrompt);
+    await page.evaluate(() => { window.qaDenyClipboard = false; });
+    await page.getByRole('button').filter({ hasText: '나학생' }).filter({ hasText: '1차 제출완료' }).click();
+    await page.getByRole('button', { name: '이 주제 기준 복사', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.qaCopiedFeedback), personalPrompt);
     await page.getByRole('button', { name: /주제별 피드백 기준/ }).click();
     await page.getByRole('button', { name: '선택한 2명 폴더 준비' }).click();
     await page.getByText('2명 중 1명의 제출본을 준비했습니다.', { exact: false }).waitFor();
@@ -184,7 +202,7 @@ async function main() {
     assert.equal(state.students[1].status, 'FEEDBACK_DONE');
     assert.equal(state.students[2].status, 'STAGE_1_WRITING');
     assert.deepEqual(pageErrors, []);
-    console.log(JSON.stringify({ passed: true, checks: ['criteria reuse and save', 'partial preparation retry', 'source docs preserved', 'teacher review gate', 'manual edits retained', 'browser reload recovery', 'send selected student only', 'remote recall rejected and refreshed', 'mobile panel fits', 'reviewed batch send'], filesCreated: files.length, pageErrors }));
+    console.log(JSON.stringify({ passed: true, checks: ['criteria reuse and save', 'personal criteria copy across students', 'clipboard denial fallback', 'partial preparation retry', 'source docs preserved', 'teacher review gate', 'manual edits retained', 'browser reload recovery', 'send selected student only', 'remote recall rejected and refreshed', 'mobile panel fits', 'reviewed batch send'], filesCreated: files.length, pageErrors }));
   } catch (error) {
     await page.screenshot({ path: path.join(process.env.BATCH_FEEDBACK_QA_DIR || process.cwd(), 'batch-feedback-failure.png'), fullPage: true });
     throw error;

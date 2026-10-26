@@ -175,9 +175,13 @@ export default function TeacherDashboard({
   const [isPullingDoc, setIsPullingDoc] = useState(false);
   const [waitingDocReturn, setWaitingDocReturn] = useState(false);
   const [showPreviousFeedback, setShowPreviousFeedback] = useState(false);
+  const [criteriaCopyFailed, setCriteriaCopyFailed] = useState(false);
   const docOpenedTimeRef = useRef(0);
 
   const currentTopic = topics.find((t) => t.id === openedTopicId) || null;
+  const currentFeedbackPrompt = currentTopic
+    ? buildFeedbackPrompt(currentTopic, currentTopic.feedbackCriteria)
+    : DEFAULT_BRISK_PROMPT;
 
   const rawSelectedStudent =
     students.find((s) => String(s.number) === String(selectedStudentNumber)) ||
@@ -238,6 +242,7 @@ export default function TeacherDashboard({
     setShowResolvedQuestions(false);
     setEditingReplyId(null);
     setShowPreviousFeedback(false);
+    setCriteriaCopyFailed(false);
     setActivePageIdx(Math.max(0, pages.length - 1));
 
     // 2차(또는 N차) 수정본 제출 상태(REVISION_SUBMITTED)일 때는 기존 1차 첨삭 내용을 비우고 '새판'으로 시작!
@@ -324,6 +329,17 @@ export default function TeacherDashboard({
     } catch (e) {}
   };
 
+  const handleCopyTopicFeedbackCriteria = async () => {
+    try {
+      await navigator.clipboard.writeText(currentFeedbackPrompt);
+      setCriteriaCopyFailed(false);
+      showToast('이 주제의 피드백 기준을 복사했습니다. Brisk에 붙여 넣어 주세요.');
+    } catch {
+      setCriteriaCopyFailed(true);
+      showToast('자동 복사가 허용되지 않았습니다. 펼쳐진 기준 내용을 선택해 직접 복사해 주세요.');
+    }
+  };
+
   // 해당 학생의 전용 구글 독스로 바로 연결 (비동기 팝업 차단 방지 적용) + Brisk 프롬프트 자동 복사
   const handleOpenDocWithBrisk = async (st) => {
     // 1. 브라우저 팝업 차단을 방지하기 위해 사용자 클릭 직후 빈 탭을 동기적으로 먼저 확보합니다!
@@ -348,7 +364,7 @@ export default function TeacherDashboard({
     }
 
     try {
-      await navigator.clipboard.writeText(currentTopic ? buildFeedbackPrompt(currentTopic, currentTopic.feedbackCriteria) : DEFAULT_BRISK_PROMPT);
+      await navigator.clipboard.writeText(currentFeedbackPrompt);
     } catch (e) {}
 
     let targetDocId = st.docId;
@@ -2317,6 +2333,36 @@ export default function TeacherDashboard({
                       독스 복귀 대기중
                     </span>
                   )}
+                </div>
+
+                <div className="rounded-xl border border-[#B7E4C7] bg-white p-3 space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs font-bold text-[#1B4332]">
+                      {currentTopic.feedbackCriteria ? '이 주제에 저장한 피드백 기준' : '기본 피드백 기준 사용 중'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={handleCopyTopicFeedbackCriteria}
+                      className="sketch-btn-secondary min-h-11 px-3 py-2 text-xs font-bold inline-flex items-center justify-center gap-1.5"
+                    >
+                      <Copy className="w-3.5 h-3.5" aria-hidden="true" />
+                      <span>이 주제 기준 복사</span>
+                    </button>
+                  </div>
+                  <p className="text-xs text-[#475569] leading-relaxed">
+                    위쪽 ‘주제별 피드백 기준’에 한 번 저장하면 모든 학생의 개인·묶음 첨삭에 함께 사용합니다. 복사한 기준은 Brisk에 붙여 넣어 주세요.
+                  </p>
+                  <details open={criteriaCopyFailed || undefined} className="text-xs text-[#475569]">
+                    <summary className="cursor-pointer py-2 font-bold">복사할 기준 보기</summary>
+                    <textarea
+                      readOnly
+                      aria-label="개인 첨삭에 복사할 주제 기준"
+                      value={currentFeedbackPrompt}
+                      onFocus={(event) => event.target.select()}
+                      rows={6}
+                      className="mt-1 w-full rounded-xl border border-[#CBD5E1] bg-[#FBFBF9] p-3 text-sm leading-relaxed focus:outline-2 focus:outline-[#2D6A4F]"
+                    />
+                  </details>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2">
