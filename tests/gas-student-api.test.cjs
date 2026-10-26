@@ -248,6 +248,97 @@ test('여러 번 고쳐 쓴 글은 차수별로 누적되고 자동으로 최종
   assert.notEqual(third.student.status, 'FINAL_COMPLETED');
 });
 
+test('학생은 제출 후 회수(unsubmit)하여 수정하고 다시 제출할 수 있다', () => {
+  const { context } = makeHarness();
+  const login = context.studentLoginV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    classId: 'CLASS_A',
+    accessKey: 'class-secret',
+    number: '1',
+    name: '가학생'
+  });
+
+  // 1차 글 제출
+  const first = context.submitStageV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    sessionToken: login.sessionToken,
+    topicId: 'TOPIC_A',
+    stage: 1,
+    pieceTitle: '나의 글',
+    text: '오타가 있는 첫 번째 글'
+  });
+  assert.equal(first.ok, true);
+  assert.equal(first.student.locked, true);
+
+  // 제출 회수 (unsubmit)
+  const unsubmit = context.unsubmitStageV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    sessionToken: login.sessionToken,
+    topicId: 'TOPIC_A'
+  });
+  assert.equal(unsubmit.ok, true);
+  assert.equal(unsubmit.student.locked, false);
+  assert.equal(unsubmit.student.status, 'STAGE_1_WRITING');
+
+  // 오타 수정 후 재제출 (isRecallUpdate: true -> 차수 1 유지)
+  const resubmit = context.submitStageV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    sessionToken: login.sessionToken,
+    topicId: 'TOPIC_A',
+    stage: 1,
+    pieceTitle: '나의 멋진 글',
+    text: '오타를 고친 첫 번째 글',
+    isRecallUpdate: true
+  });
+  assert.equal(resubmit.ok, true);
+  assert.equal(resubmit.student.locked, true);
+  assert.equal(resubmit.student.draftHistory.length, 1);
+  assert.equal(resubmit.student.draftHistory[0].text, '오타를 고친 첫 번째 글');
+});
+
+test('완료(FINAL_COMPLETED)된 학생도 추가 작성하여 새 차수로 다시 제출할 수 있다', () => {
+  const { context } = makeHarness();
+  const login = context.studentLoginV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    classId: 'CLASS_A',
+    accessKey: 'class-secret',
+    number: '1',
+    name: '가학생'
+  });
+
+  // 1차 글 제출
+  context.submitStageV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    sessionToken: login.sessionToken,
+    topicId: 'TOPIC_A',
+    stage: 1,
+    pieceTitle: '완성할 글',
+    text: '1차 완성 글'
+  });
+
+  // 교사가 최종 완성 처리
+  const stateContext = context.readAppStateV2_('spreadsheet-id-1234567890');
+  stateContext.state.students[0].status = 'FINAL_COMPLETED';
+  stateContext.state.students[0].locked = true;
+  context.writeAppStateV2_(stateContext);
+
+  // 학생이 완료 후 추가 작성하여 제출 (allowRevision: true)
+  const revised = context.submitStageV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    sessionToken: login.sessionToken,
+    topicId: 'TOPIC_A',
+    stage: 2,
+    pieceTitle: '완성할 글 (더 다듬음)',
+    text: '완료 후 더 다듬은 2차 글',
+    allowRevision: true
+  });
+  assert.equal(revised.ok, true);
+  assert.equal(revised.student.status, 'REVISION_SUBMITTED');
+  assert.equal(revised.student.locked, true);
+  assert.equal(revised.student.draftHistory.length, 2);
+  assert.equal(revised.student.draftHistory[1].text, '완료 후 더 다듬은 2차 글');
+});
+
 test('작품 제목이 없는 학생 글은 제출하지 않는다', () => {
   const { context } = makeHarness();
   const login = context.studentLoginV2({

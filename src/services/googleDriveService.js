@@ -613,8 +613,33 @@ function getStoredDraftHistory(record = {}) {
   }));
 }
 
-function appendStoredDraftRevision(record = {}, text, pieceTitle, updatedAt, updatedAtIso) {
+function appendStoredDraftRevision(record = {}, text, pieceTitle, updatedAt, updatedAtIso, options = {}) {
   const history = getStoredDraftHistory(record);
+  if (options.isRecallUpdate && history.length > 0) {
+    const lastIndex = history.length - 1;
+    const currentDraft = history[lastIndex];
+    history[lastIndex] = {
+      ...currentDraft,
+      text,
+      pieceTitle,
+      updatedAt,
+      updatedAtIso
+    };
+    const round = currentDraft.round || history.length;
+    const nextRecord = {
+      ...record,
+      status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
+      locked: true,
+      pieceTitle,
+      draftHistory: history,
+      updatedAt,
+      updatedAtIso
+    };
+    delete nextRecord.recalled;
+    if (round <= 5) nextRecord[`draft${round}`] = text;
+    return nextRecord;
+  }
+
   if (history.length > 0 && (record.teacherNote || record.feedbackItems?.length)) {
     const lastIndex = history.length - 1;
     history[lastIndex] = {
@@ -647,6 +672,7 @@ function appendStoredDraftRevision(record = {}, text, pieceTitle, updatedAt, upd
     updatedAt,
     updatedAtIso
   };
+  delete nextRecord.recalled;
   if (round <= 5) nextRecord[`draft${round}`] = text;
   return nextRecord;
 }

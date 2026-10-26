@@ -38,6 +38,7 @@ function handleRequest(e) {
       'getAllData',
       'createStudentDocs',
       'submitStage',
+      'unsubmitStage',
       'pullFeedbackFromDoc',
       'updateStudentStatus',
       'batchDeadlineControl',
@@ -77,6 +78,9 @@ function handleRequest(e) {
         break;
       case 'submitStage':
         result = payload.sessionToken ? submitStageV2(payload) : submitStage(payload);
+        break;
+      case 'unsubmitStage':
+        result = payload.sessionToken ? unsubmitStageV2(payload) : { ok: true };
         break;
       case 'pullFeedbackFromDoc':
         result = pullFeedbackFromDoc(payload);
@@ -396,9 +400,36 @@ function getDraftHistoryV2_(record) {
   });
 }
 
-function appendDraftRevisionV2_(record, text, pieceTitle, updatedAt, updatedAtIso) {
+function appendDraftRevisionV2_(record, text, pieceTitle, updatedAt, updatedAtIso, options) {
   record = record || {};
+  options = options || {};
   var history = getDraftHistoryV2_(record).slice();
+
+  // 학생이 아직 교사 피드백을 받지 않은 상태에서 회수한 뒤 다시 제출하는 경우:
+  // 불필요한 차수 추가 없이 현재 차수를 수정된 내용으로 업데이트
+  if (options.isRecallUpdate && history.length > 0) {
+    var lastIndex = history.length - 1;
+    var currentDraft = history[lastIndex];
+    history[lastIndex] = Object.assign({}, currentDraft, {
+      text: text,
+      pieceTitle: pieceTitle,
+      updatedAt: updatedAt,
+      updatedAtIso: updatedAtIso
+    });
+    var round = currentDraft.round || history.length;
+    var nextRecord = Object.assign({}, record, {
+      status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
+      locked: true,
+      pieceTitle: pieceTitle,
+      draftHistory: history,
+      updatedAt: updatedAt,
+      updatedAtIso: updatedAtIso
+    });
+    delete nextRecord.recalled;
+    if (round <= 5) nextRecord['draft' + round] = text;
+    return nextRecord;
+  }
+
   if (history.length > 0 && (record.teacherNote || (record.feedbackItems || []).length > 0)) {
     var lastIndex = history.length - 1;
     var previousLast = history[lastIndex];
@@ -427,6 +458,7 @@ function appendDraftRevisionV2_(record, text, pieceTitle, updatedAt, updatedAtIs
     updatedAt: updatedAt,
     updatedAtIso: updatedAtIso
   });
+  delete nextRecord.recalled;
   if (round <= 5) nextRecord['draft' + round] = text;
   return nextRecord;
 }
@@ -452,7 +484,11 @@ function submitStageV2(payload) {
   const isActive = activeTopic && String(activeTopic.id) === String(topic.id);
   const existingTopicRecord = student.historyByTopic && student.historyByTopic[topic.id];
   const isStudentLocked = isActive ? student.locked : Boolean(existingTopicRecord && existingTopicRecord.locked);
-  if (isStudentLocked || topic.classLocked) {
+  
+  if (topic.classLocked) {
+    return { ok: false, error: '선생님이 학급 글쓰기를 마감했습니다. 선생님께 문의해 주세요.' };
+  }
+  if (isStudentLocked && !payload.allowRevision && !payload.isRecallUpdate && !student.recalled) {
     return { ok: false, error: '현재는 제출이 마감되어 있습니다. 선생님께 문의해 주세요.' };
   }
 
@@ -471,7 +507,8 @@ function submitStageV2(payload) {
     text,
     pieceTitle,
     now,
-    nowIso
+    nowIso,
+    { isRecallUpdate: Boolean(payload.isRecallUpdate || student.recalled) }
   );
   if (isActive) {
     Object.keys(submittedRecord).forEach(function(key) {
@@ -482,6 +519,55 @@ function submitStageV2(payload) {
     student.historyByTopic = student.historyByTopic || {};
     student.historyByTopic[topic.id] = submittedRecord;
     student.updatedAtIso = nowIso;
+  }
+
+  state.students[studentIndex] = student;
+  writeAppStateV2_(context);
+  return { ok: true, student: student };
+}
+
+function unsubmitStageV2(payload) {
+  const session = requireStudentSessionV2_(payload);
+  const context = readAppStateV2_(session.spreadsheetId);
+  const state = context.state;
+  const topic = state.topics.find(function(item) {
+    return String(item.id) === String(payload.topicId) &&
+      belongsToClassV2_(item, session.classId, state);
+  });
+  if (!topic) return { ok: false, error: '글쓰기 주제를 찾을 수 없습니다.' };
+  if (topic.classLocked) {
+    return { ok: false, error: '선생님이 학급 글쓰기를 마감하여 회수할 수 없습니다.' };
+  }
+
+  const studentIndex = state.students.findIndex(function(item) {
+    return belongsToClassV2_(item, session.classId, state) &&
+      String(item.number).trim() === String(session.number).trim();
+  });
+  if (studentIndex < 0) return { ok: false, error: '학생 정보를 찾을 수 없습니다.' };
+
+  const student = state.students[studentIndex];
+  const activeTopic = findActiveTopicV2_(state, session.classId);
+  const isActive = activeTopic && String(activeTopic.id) === String(topic.id);
+  
+  if (isActive) {
+    student.locked = false;
+    student.recalled = true;
+    if (student.status === 'STAGE_1_SUBMITTED') {
+      student.status = 'STAGE_1_WRITING';
+    } else if (student.status === 'REVISION_SUBMITTED') {
+      student.status = 'FEEDBACK_DONE';
+    }
+  } else {
+    student.historyByTopic = student.historyByTopic || {};
+    const record = student.historyByTopic[topic.id] || {};
+    record.locked = false;
+    record.recalled = true;
+    if (record.status === 'STAGE_1_SUBMITTED') {
+      record.status = 'STAGE_1_WRITING';
+    } else if (record.status === 'REVISION_SUBMITTED') {
+      record.status = 'FEEDBACK_DONE';
+    }
+    student.historyByTopic[topic.id] = record;
   }
 
   state.students[studentIndex] = student;

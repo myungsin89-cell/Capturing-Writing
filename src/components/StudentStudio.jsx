@@ -40,6 +40,7 @@ export default function StudentStudio({
   onLoginStudent,
   onLogoutStudent,
   onSubmitStage,
+  onUnsubmitStage,
   onAddQuestion
 }) {
   const [loginNumber, setLoginNumber] = useState('');
@@ -47,7 +48,10 @@ export default function StudentStudio({
   const [loginError, setLoginError] = useState('');
   const [isEntering, setIsEntering] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isUnsubmitting, setIsUnsubmitting] = useState(false);
   const [isQuestionSubmitting, setIsQuestionSubmitting] = useState(false);
+  const [isEditingCompleted, setIsEditingCompleted] = useState(false);
+  const [isRecalled, setIsRecalled] = useState(false);
 
   // null이면 [내 글쓰기 책장] 화면, 값이 있으면 해당 [주제 공책 글쓰기] 화면!
   const [openedTopicId, setOpenedTopicId] = useState(null);
@@ -131,6 +135,8 @@ export default function StudentStudio({
     setShowGreenText(false);
     setViewingPageIdx(null);
     setRestoredBannerMsg('');
+    setIsEditingCompleted(false);
+    setIsRecalled(Boolean(topicStudentData.recalled));
 
     const pages = getStudentDraftPages(topicStudentData);
     const submittedLatest = pages.length > 0 ? pages[pages.length - 1].text : '';
@@ -309,12 +315,17 @@ export default function StudentStudio({
     }
     setIsSubmitting(true);
     try {
+      const options = {
+        isRecallUpdate: isRecalled,
+        allowRevision: isEditingCompleted
+      };
       const result = await onSubmitStage(
         currentStudent.number,
         currentWritingStage,
         editorText,
         selectedTopic.id,
-        pieceTitle.trim()
+        pieceTitle.trim(),
+        options
       );
       if (result?.ok) {
         const storageKey = getDraftStorageKey(selectedTopic?.id);
@@ -323,12 +334,41 @@ export default function StudentStudio({
         }
         setLastSavedTime('');
         setRestoredBannerMsg('');
-        showToast('선생님께 내 글을 제출했어요!');
+        setIsRecalled(false);
+        setIsEditingCompleted(false);
+        showToast(
+          isRecalled
+            ? '수정한 글을 다시 선생님께 제출했어요!'
+            : isEditingCompleted
+            ? '새로 다듬은 글을 선생님께 제출했어요!'
+            : '선생님께 내 글을 제출했어요!'
+        );
       } else {
         showToast(result?.error || '제출하지 못했습니다. 다시 시도해 주세요.');
       }
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleUnsubmitStage = async () => {
+    if (isTeacherPreview || !onUnsubmitStage) return;
+    setIsUnsubmitting(true);
+    try {
+      const res = await onUnsubmitStage(currentStudent.number, selectedTopic.id);
+      if (res?.ok) {
+        setIsRecalled(true);
+        showToast('제출을 회수했습니다. 자유롭게 고친 뒤 다시 제출해 주세요!');
+        setTimeout(() => {
+          if (textareaRef.current) {
+            textareaRef.current.focus();
+          }
+        }, 50);
+      } else {
+        showToast(res?.error || '제출을 회수하지 못했습니다.');
+      }
+    } finally {
+      setIsUnsubmitting(false);
     }
   };
 
@@ -562,9 +602,15 @@ export default function StudentStudio({
   // ============================================================================
   // 화면 3: 책장에서 선택한 주제의 『와이드 글쓰기 공책 화면』
   // ============================================================================
-  const isLocked = Boolean(topicStudentData?.locked) || Boolean(selectedTopic?.classLocked);
+  const isClassLocked = Boolean(selectedTopic?.classLocked);
+  const isTeacherLocked = Boolean(topicStudentData?.locked) && !isRecalled;
   const isFinalCompleted = isFinalWritingStatus(topicStudentData?.status);
-  const isReadOnly = isTeacherPreview || isLocked || isFinalCompleted;
+  const isLocked = isClassLocked || isTeacherLocked;
+  const isReadOnly =
+    isTeacherPreview ||
+    isClassLocked ||
+    (isFinalCompleted && !isEditingCompleted) ||
+    isTeacherLocked;
   const hasRevision = draftPages.length >= 2;
   const activeDisplayText =
     viewingPageIdx !== null && draftPages[viewingPageIdx]
@@ -780,14 +826,55 @@ export default function StudentStudio({
                     </p>
                   </div>
                 </div>
+                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
+                  <button
+                    type="button"
+                    onClick={() => setIsDiffModalOpen(true)}
+                    className="sketch-btn-primary px-3.5 py-2 text-xs font-bold flex items-center gap-1.5"
+                  >
+                    <HandDrawnDiffIcon size={15} color="#FFFFFF" />
+                    <span>처음 글과 비교하기</span>
+                  </button>
+                  {!isTeacherPreview && !isClassLocked && !isEditingCompleted && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsEditingCompleted(true);
+                        setViewingPageIdx(null);
+                        setTimeout(() => textareaRef.current?.focus(), 50);
+                      }}
+                      className="sketch-btn-secondary px-3.5 py-2 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <HandDrawnPencilIcon size={14} color="#1B4332" />
+                      <span>글 더 다듬기</span>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {isEditingCompleted && (
+              <div className="mb-3 px-4 py-3 rounded-2xl bg-[#FEF9C3] border border-[#FACC15] text-xs sm:text-sm font-bold text-[#854D0E] flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <HandDrawnPencilIcon size={16} color="#854D0E" />
+                  <span>선생님이 완성해 주신 글을 바탕으로 더 다듬고 있어요. 작성을 마친 후 아래 [다시 제출하기]를 눌러주세요.</span>
+                </div>
                 <button
                   type="button"
-                  onClick={() => setIsDiffModalOpen(true)}
-                  className="sketch-btn-primary px-3.5 py-2 text-xs font-bold flex items-center gap-1.5 shrink-0 self-end sm:self-center"
+                  onClick={() => setIsEditingCompleted(false)}
+                  className="text-xs text-[#854D0E] underline hover:text-[#713F12] cursor-pointer shrink-0"
                 >
-                  <HandDrawnDiffIcon size={15} color="#FFFFFF" />
-                  <span>처음 글과 비교하기</span>
+                  수정 취소하고 완성본 보기
                 </button>
+              </div>
+            )}
+
+            {isRecalled && (
+              <div className="mb-3 px-4 py-3 rounded-2xl bg-[#E0F2FE] border border-[#7DD3FC] text-xs sm:text-sm font-bold text-[#0369A1] flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <CornerDownLeft className="w-4 h-4 text-[#0284C7]" />
+                  <span>제출을 회수하여 수정 모드로 돌아왔어요. 오타나 생각을 고친 뒤 아래 [수정 완료! 다시 제출하기]를 눌러주세요.</span>
+                </div>
               </div>
             )}
 
@@ -879,30 +966,67 @@ export default function StudentStudio({
                 <BookOpen className="w-4 h-4" />
                 <span>교사 미리보기에서는 학생 공책을 읽기만 할 수 있습니다</span>
               </div>
-            ) : isFinalCompleted ? (
-              <div className="w-full sm:w-auto py-3.5 px-6 rounded-2xl bg-[#D8F3DC] border-2 border-[#1B4332] text-sm font-bold text-[#1B4332] flex items-center justify-center sm:justify-start gap-3 shadow-2xs">
-                <span className="text-2xl">🏅</span>
-                <div>
-                  <div className="text-xs text-[#2D6A4F] font-semibold">글쓰기 여정 완료</div>
-                  <div>선생님이 최종 완성본으로 확인했어요! 글 쓰느라 정말 수고 많았어요 👏</div>
+            ) : isFinalCompleted && !isEditingCompleted ? (
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="py-3.5 px-6 rounded-2xl bg-[#D8F3DC] border-2 border-[#1B4332] text-sm font-bold text-[#1B4332] flex items-center justify-center sm:justify-start gap-3 shadow-2xs">
+                  <span className="text-2xl">🏅</span>
+                  <div>
+                    <div className="text-xs text-[#2D6A4F] font-semibold">글쓰기 여정 완료</div>
+                    <div>선생님이 최종 완성본으로 확인했어요! 글 쓰느라 정말 수고 많았어요 👏</div>
+                  </div>
                 </div>
+                {!isClassLocked && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingCompleted(true);
+                      setViewingPageIdx(null);
+                      setTimeout(() => textareaRef.current?.focus(), 50);
+                    }}
+                    className="sketch-btn-secondary px-5 py-3.5 text-sm font-bold flex items-center gap-2 cursor-pointer hover:bg-[#D8F3DC]"
+                  >
+                    <HandDrawnPencilIcon size={16} color="#1B4332" />
+                    <span>이어서 더 고쳐 쓰기</span>
+                  </button>
+                )}
               </div>
-            ) : isLocked ? (
-              <div className="py-3.5 px-6 rounded-xl bg-[#F2F9F5] border border-[#52B788] text-sm font-bold text-[#1B4332] flex items-center gap-2">
-                <HandDrawnCheckIcon size={18} color="#1B4332" />
-                <span>최신 수정본을 제출했어요. 선생님의 확인을 기다리고 있어요.</span>
+            ) : isTeacherLocked ? (
+              <div className="flex items-center gap-3 flex-wrap">
+                <div className="py-3.5 px-5 rounded-2xl bg-[#F2F9F5] border border-[#52B788] text-sm font-bold text-[#1B4332] flex items-center gap-2">
+                  <HandDrawnCheckIcon size={18} color="#1B4332" />
+                  <span>
+                    {topicStudentData?.status === 'STAGE_1_SUBMITTED'
+                      ? '1차 글을 제출했어요. 선생님의 확인을 기다리고 있어요.'
+                      : '최신 수정본을 제출했어요. 선생님의 확인을 기다리고 있어요.'}
+                  </span>
+                </div>
+                {!isClassLocked && (
+                  <button
+                    type="button"
+                    onClick={handleUnsubmitStage}
+                    disabled={isUnsubmitting}
+                    className="sketch-btn-secondary px-4 py-3.5 text-sm font-bold flex items-center gap-1.5 cursor-pointer hover:bg-[#FEF2F2] hover:border-[#EF4444] hover:text-[#B91C1C] transition"
+                  >
+                    <CornerDownLeft className="w-4 h-4" />
+                    <span>{isUnsubmitting ? '회수하는 중...' : '제출 회수하고 더 고쳐 쓰기'}</span>
+                  </button>
+                )}
               </div>
             ) : (
               <button
                 type="button"
                 onClick={handleStageSubmit}
                 disabled={isSubmitting}
-                className="w-full sm:w-auto min-w-[260px] h-14 px-8 sketch-btn-primary text-base font-bold flex items-center justify-center gap-2"
+                className="w-full sm:w-auto min-w-[260px] h-14 px-8 sketch-btn-primary text-base font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
                 <HandDrawnCheckIcon size={20} color="#FFFFFF" />
                 <span>
                   {isSubmitting
                     ? '안전하게 제출하고 있어요...'
+                    : isRecalled
+                    ? '수정 완료! 다시 제출하기'
+                    : isEditingCompleted
+                    ? '더 다듬었어요! 다시 제출하기'
                     : currentWritingStage === 1
                     ? '다 썼어요! 선생님께 제출하기'
                     : `${currentWritingStage}차 수정 완료! 다시 제출하기`}

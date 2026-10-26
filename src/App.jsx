@@ -112,8 +112,33 @@ function getDraftHistory(record = {}) {
   }));
 }
 
-function appendDraftRevision(record = {}, text, pieceTitle, updatedAt, updatedAtIso) {
+function appendDraftRevision(record = {}, text, pieceTitle, updatedAt, updatedAtIso, options = {}) {
   const history = getDraftHistory(record);
+  if (options.isRecallUpdate && history.length > 0) {
+    const lastIndex = history.length - 1;
+    const currentDraft = history[lastIndex];
+    history[lastIndex] = {
+      ...currentDraft,
+      text,
+      pieceTitle,
+      updatedAt,
+      updatedAtIso
+    };
+    const round = currentDraft.round || history.length;
+    const nextRecord = {
+      ...record,
+      status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
+      locked: true,
+      pieceTitle,
+      draftHistory: history,
+      updatedAt,
+      updatedAtIso
+    };
+    delete nextRecord.recalled;
+    if (round <= 5) nextRecord[`draft${round}`] = text;
+    return nextRecord;
+  }
+
   if (history.length > 0 && (record.teacherNote || record.feedbackItems?.length)) {
     const lastIndex = history.length - 1;
     history[lastIndex] = {
@@ -147,7 +172,7 @@ function appendDraftRevision(record = {}, text, pieceTitle, updatedAt, updatedAt
     updatedAt,
     updatedAtIso
   };
-
+  delete nextRecord.recalled;
   if (round <= 5) nextRecord[`draft${round}`] = text;
   return nextRecord;
 }
@@ -820,8 +845,8 @@ export default function App() {
     };
   }, [isStudentUrlMode, studentSession?.token, gasUrl, urlSheetId, callGasApi]);
 
-  // 학생 제출 (문단 구조 100% 보존하여 저장)
-  const handleSubmitStage = async (studentNumber, stage, text, topicId, pieceTitle) => {
+  // 학생 제출 (문단 구조 100% 보존하여 저장, 회수 시 현재 차수 업데이트 및 완료 후 추가 작성 지원)
+  const handleSubmitStage = async (studentNumber, stage, text, topicId, pieceTitle, options = {}) => {
     const cleanPieceTitle = String(pieceTitle || '').trim();
     if (!cleanPieceTitle) {
       return { ok: false, error: '작품 제목을 먼저 지어 주세요.' };
@@ -838,7 +863,7 @@ export default function App() {
         if (!belongsToActiveClass(st) || String(st.number) !== String(studentNumber)) return st;
 
         if (isActive) {
-          return appendDraftRevision(st, text, cleanPieceTitle, `오늘 ${now}`, nowIso);
+          return appendDraftRevision(st, text, cleanPieceTitle, `오늘 ${now}`, nowIso, options);
         }
 
         const prevTopicData = st.historyByTopic?.[topicId] || {};
@@ -851,7 +876,8 @@ export default function App() {
               text,
               cleanPieceTitle,
               `오늘 ${now}`,
-              nowIso
+              nowIso,
+              options
             )
           },
           updatedAtIso: nowIso
@@ -866,7 +892,9 @@ export default function App() {
         topicId,
         stage,
         text,
-        pieceTitle: cleanPieceTitle
+        pieceTitle: cleanPieceTitle,
+        isRecallUpdate: Boolean(options.isRecallUpdate),
+        allowRevision: Boolean(options.allowRevision)
       });
 
       // 동시 제출 요청 몰림(429 또는 락 대기) 시 2초 대기 후 1회 자동 재시도
@@ -885,7 +913,9 @@ export default function App() {
           topicId,
           stage,
           text,
-          pieceTitle: cleanPieceTitle
+          pieceTitle: cleanPieceTitle,
+          isRecallUpdate: Boolean(options.isRecallUpdate),
+          allowRevision: Boolean(options.allowRevision)
         });
       }
 
@@ -898,6 +928,47 @@ export default function App() {
     }
 
     updateLocalStudent();
+    return { ok: true };
+  };
+
+  // 학생 제출 회수 (선생님 확인 전 오타나 고칠 점이 생각났을 때 스스로 회수하여 수정)
+  const handleUnsubmitStage = async (studentNumber, topicId) => {
+    const isActive = !topicId || topicId === (config.activeTopicId || 'TOPIC_1');
+
+    if (isStudentUrlMode) {
+      const data = await callGasApi({
+        action: 'unsubmitStage',
+        sessionToken: studentSession?.token || '',
+        topicId
+      });
+      if (!data?.ok || !data.student) {
+        return { ok: false, error: data?.error || '제출을 회수하지 못했습니다.' };
+      }
+      setStudents([data.student]);
+      setActiveStudent(data.student);
+      return { ok: true };
+    }
+
+    setStudents((prev) =>
+      prev.map((st) => {
+        if (!belongsToActiveClass(st) || String(st.number) !== String(studentNumber)) return st;
+
+        if (isActive) {
+          const nextStatus = st.status === 'STAGE_1_SUBMITTED' ? 'STAGE_1_WRITING' : 'FEEDBACK_DONE';
+          return { ...st, locked: false, recalled: true, status: nextStatus };
+        }
+
+        const prevTopicData = st.historyByTopic?.[topicId] || {};
+        const nextStatus = prevTopicData.status === 'STAGE_1_SUBMITTED' ? 'STAGE_1_WRITING' : 'FEEDBACK_DONE';
+        return {
+          ...st,
+          historyByTopic: {
+            ...(st.historyByTopic || {}),
+            [topicId]: { ...prevTopicData, locked: false, recalled: true, status: nextStatus }
+          }
+        };
+      })
+    );
     return { ok: true };
   };
 
@@ -1709,6 +1780,7 @@ export default function App() {
                 : () => setActiveStudent(null)
             }
             onSubmitStage={handleSubmitStage}
+            onUnsubmitStage={handleUnsubmitStage}
             onAddQuestion={handleAddQuestion}
           />
         ) : (
