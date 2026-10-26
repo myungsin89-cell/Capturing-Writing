@@ -1,15 +1,15 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, ChevronDown, ChevronUp, Copy, ExternalLink, FolderPlus, RefreshCw } from 'lucide-react';
+import { Check, Copy, ExternalLink, FolderPlus, RefreshCw } from 'lucide-react';
 import { prepareFeedbackBatchInDrive, pullBriskFeedbackFromGoogleDoc } from '../services/googleDriveService';
 import {
   buildFeedbackPrompt, getFeedbackTopicRecord, getSubmissionSnapshot, hasFeedbackContent,
-  isFeedbackCandidate, isMatchingSubmission, normalizeFeedbackCriteria, wasBatchFeedbackDelivered
+  isFeedbackCandidate, isMatchingSubmission, wasBatchFeedbackDelivered
 } from '../utils/batchFeedback';
 
 const buttonClass = 'sketch-btn-secondary min-h-11 px-4 py-2 text-sm font-bold inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed';
 const fieldClass = 'w-full rounded-xl border border-[#CBD5E1] bg-white p-3 text-base leading-relaxed focus:outline-2 focus:outline-[#2D6A4F]';
 
-export default function BatchFeedbackPanel({ topic, topics, students, config, googleAuth, onSaveCriteria, onSendFeedback }) {
+export default function BatchFeedbackPanel({ topic, students, config, googleAuth, onSendFeedback }) {
   const storageKey = `sseudam_feedback_batches_v1:${googleAuth?.user?.email || config.spreadsheetId || 'local'}:${config.activeClassId}:${topic.id}`;
   const [workspace, setWorkspace] = useState(() => {
     try {
@@ -21,9 +21,6 @@ export default function BatchFeedbackPanel({ topic, topics, students, config, go
   const currentRef = useRef({ students, config });
   currentRef.current = { students, config };
   const busyRef = useRef(false);
-  const [expanded, setExpanded] = useState(false);
-  const [showCriteria, setShowCriteria] = useState(false);
-  const [criteria, setCriteria] = useState(() => normalizeFeedbackCriteria(topic.feedbackCriteria));
   const [selectedNumbers, setSelectedNumbers] = useState(null);
   const [activeBatchId, setActiveBatchId] = useState(workspace[0]?.id || '');
   const [activeEntryId, setActiveEntryId] = useState('');
@@ -31,9 +28,7 @@ export default function BatchFeedbackPanel({ topic, topics, students, config, go
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [storageError, setStorageError] = useState('');
-  const [reuseTopicId, setReuseTopicId] = useState('');
   const [copyFallback, setCopyFallback] = useState('');
-  const criteriaDirty = JSON.stringify(normalizeFeedbackCriteria(criteria)) !== JSON.stringify(normalizeFeedbackCriteria(topic.feedbackCriteria));
 
   const storeWorkspace = (next) => {
     workspaceRef.current = next;
@@ -77,7 +72,7 @@ export default function BatchFeedbackPanel({ topic, topics, students, config, go
   const chosen = candidates.filter((record) => selectedNumbers === null || selectedNumbers.includes(String(record.number)));
   const activeBatch = workspace.find((batch) => batch.id === activeBatchId);
   const activeEntry = activeBatch?.entries.find((entry) => entry.id === activeEntryId) || activeBatch?.entries[0];
-  const otherCriteriaTopics = topics.filter((item) => item.id !== topic.id && item.feedbackCriteria);
+  const criteriaChanged = activeBatch && activeBatch.prompt !== buildFeedbackPrompt(topic, topic.feedbackCriteria);
 
   const run = async (label, action) => {
     if (busyRef.current) return;
@@ -90,14 +85,8 @@ export default function BatchFeedbackPanel({ topic, topics, students, config, go
     try { await navigator.clipboard.writeText(text); setCopyFallback(''); setMessage('피드백 기준을 복사했습니다. Brisk의 피드백 요청란에 붙여 넣어 주세요.'); }
     catch { setError('복사하지 못했습니다. 아래 요청문을 직접 선택해 복사해 주세요.'); setCopyFallback(text); }
   };
-  const saveCriteria = () => run('기준 저장 중', async () => {
-    const result = await onSaveCriteria(topic.id, normalizeFeedbackCriteria(criteria));
-    if (!result?.ok) throw new Error(result?.error || '기준을 저장하지 못했습니다.');
-    setMessage('이 주제의 피드백 기준을 저장했습니다. 다른 주제에서도 불러올 수 있습니다.');
-  });
   const prepare = (existingBatch) => run('학생 문서 준비 중', async () => {
     if (!googleAuth?.accessToken) throw new Error('구글 로그인 후 묶음 피드백을 준비해 주세요.');
-    if (!existingBatch && criteriaDirty) throw new Error('수정한 피드백 기준을 먼저 저장해 주세요.');
     if (!existingBatch && !chosen.length) return;
     const batch = existingBatch || {
       id: crypto.randomUUID(), topicId: topic.id, classId: config.activeClassId,
@@ -163,42 +152,16 @@ export default function BatchFeedbackPanel({ topic, topics, students, config, go
   return (
     <section className="sketch-card bg-white p-4 sm:p-5" aria-label="묶음 피드백">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <button type="button" className="min-h-11 text-left flex items-center gap-3 font-bold text-[#1B4332] cursor-pointer" aria-expanded={expanded} aria-controls="batch-feedback-workspace" onClick={() => setExpanded(!expanded)}>
-          <FolderPlus aria-hidden="true" className="w-5 h-5" />
-          <span>제출한 학생 묶어서 피드백 <span className="text-sm font-normal">· 새 대기 {candidates.length}명</span></span>
-          {expanded ? <ChevronUp aria-hidden="true" className="w-4 h-4" /> : <ChevronDown aria-hidden="true" className="w-4 h-4" />}
-        </button>
-        <button type="button" className={buttonClass} onClick={() => { setExpanded(true); setShowCriteria(!showCriteria); }}>주제별 피드백 기준{topic.feedbackCriteria ? ' · 저장됨' : ''}</button>
+        <div><h2 className="font-bold text-[#1B4332]">제출한 학생 묶어서 피드백</h2><p className="text-sm text-[#64748B]">새로 준비할 학생 {candidates.length}명</p></div>
+        <button type="button" className={buttonClass} onClick={() => copyText(activeBatch?.prompt || buildFeedbackPrompt(topic, topic.feedbackCriteria))}><Copy aria-hidden="true" className="w-4 h-4" />기준 복사</button>
       </div>
-      {expanded && <div id="batch-feedback-workspace" className="mt-4 space-y-5">
-        <p className="text-sm text-[#475569]">① 제출본만 폴더로 준비 → ② Brisk에서 기준을 붙여 넣고 묶음 피드백 생성·문서에 삽입 → ③ 여기서 첨삭을 가져와 확인·전송합니다. 다른 학생은 계속 작성할 수 있습니다.</p>
-        {showCriteria && <div className="rounded-2xl border border-[#D8F3DC] bg-[#F2F9F5] p-4 space-y-3">
-          <h2 className="font-bold text-[#1B4332]">이 주제의 피드백 기준</h2>
-          {otherCriteriaTopics.length > 0 && <div className="flex flex-wrap items-end gap-2">
-            <label className="flex-1 min-w-0 text-sm font-bold">다른 주제의 기준 불러오기
-              <select className={`${fieldClass} mt-1`} value={reuseTopicId} onChange={(event) => setReuseTopicId(event.target.value)}>
-                <option value="">주제를 선택하세요</option>
-                {otherCriteriaTopics.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
-              </select>
-            </label>
-            <button type="button" disabled={!reuseTopicId || Boolean(busy)} className={buttonClass} onClick={() => setCriteria(normalizeFeedbackCriteria(topics.find((item) => item.id === reuseTopicId)?.feedbackCriteria))}>불러오기</button>
-          </div>}
-          <div className="grid md:grid-cols-2 gap-3">
-            <div><label htmlFor="feedback-criteria-goal" className="text-sm font-bold">이번 수업의 목표</label><textarea id="feedback-criteria-goal" className={`${fieldClass} mt-1`} rows={3} value={criteria.goal} onChange={(event) => setCriteria({ ...criteria, goal: event.target.value })} placeholder="예: 경험한 일을 순서대로 생생하게 표현하기" /></div>
-            <div><label htmlFor="feedback-criteria-items" className="text-sm font-bold">살펴볼 기준</label><textarea id="feedback-criteria-items" className={`${fieldClass} mt-1`} rows={3} value={criteria.criteria} onChange={(event) => setCriteria({ ...criteria, criteria: event.target.value })} placeholder="예: 사건의 순서 / 구체적인 장면 / 생각과 느낌" /></div>
-          </div>
-          <div><label htmlFor="feedback-criteria-guidance" className="block text-sm font-bold">피드백 방식</label><textarea id="feedback-criteria-guidance" className={`${fieldClass} mt-1`} rows={3} value={criteria.guidance} onChange={(event) => setCriteria({ ...criteria, guidance: event.target.value })} /></div>
-          <div className="flex flex-wrap gap-2 items-center">
-            <button type="button" className="sketch-btn-primary min-h-11 px-4 py-2 text-sm font-bold disabled:opacity-50" disabled={Boolean(busy) || !criteriaDirty} onClick={saveCriteria}>이 주제에 기준 저장</button>
-            <button type="button" className={buttonClass} onClick={() => copyText(buildFeedbackPrompt(topic, criteria))}><Copy aria-hidden="true" className="w-4 h-4" />기준 복사</button>
-            <span className="text-sm text-[#475569]">{criteriaDirty ? '수정한 기준을 저장해 주세요.' : '기준은 학급 데이터와 함께 저장됩니다.'}</span>
-          </div>
-          <details className="text-sm"><summary className="cursor-pointer py-2">Brisk에 넣을 전체 요청문 보기</summary><pre className="whitespace-pre-wrap font-sans bg-white rounded-xl p-3 select-text">{buildFeedbackPrompt(topic, criteria)}</pre></details>
-        </div>}
+      <div className="mt-4 space-y-5">
+        <details className="text-sm text-[#475569]"><summary className="cursor-pointer py-1 font-bold">처음 사용하나요? 사용 순서 보기</summary><p className="mt-2">폴더 준비 → Brisk에서 기준을 붙여 넣고 묶음 첨삭 생성·문서에 삽입 → 첨삭 가져오기 → 확인·전송. 다른 학생은 계속 작성할 수 있습니다.</p></details>
 
-        <div className="rounded-2xl border border-[#CBD5E1] p-4 space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <h2 className="font-bold text-[#1B4332]">새 묶음 준비 · {chosen.length}명 선택</h2>
+        <details className="rounded-2xl border border-[#CBD5E1] p-4" open={candidates.length > 0 || !workspace.length}>
+          <summary className="cursor-pointer py-1 font-bold text-[#1B4332]">새 묶음 준비 · {chosen.length}명 선택</summary>
+          <div className="mt-3 space-y-3">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex gap-2"><button type="button" className="min-h-11 px-2 text-sm underline cursor-pointer" disabled={Boolean(busy)} onClick={() => setSelectedNumbers(null)}>전체 선택</button><button type="button" className="min-h-11 px-2 text-sm underline cursor-pointer" disabled={Boolean(busy)} onClick={() => setSelectedNumbers([])}>선택 해제</button></div>
           </div>
           {candidates.length ? <div className="flex flex-wrap gap-2">{candidates.map((record) => <label key={record.number} className="min-h-11 px-3 py-2 flex items-center gap-2 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-sm cursor-pointer">
@@ -207,24 +170,24 @@ export default function BatchFeedbackPanel({ topic, topics, students, config, go
               setSelectedNumbers(event.target.checked ? [...numbers, String(record.number)] : numbers.filter((number) => number !== String(record.number)));
             }} />{record.number}번 {record.name} · {getSubmissionSnapshot(record).round}차
           </label>)}</div> : <p className="text-sm text-[#64748B]">새로 묶을 제출본이 없습니다. 이미 준비한 학생은 아래 작업 기록에서 이어갈 수 있습니다.</p>}
-          <button type="button" className="sketch-btn-primary min-h-11 px-4 py-2 text-sm font-bold inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled={Boolean(busy) || !chosen.length || criteriaDirty || !googleAuth?.accessToken} onClick={() => prepare()}><FolderPlus aria-hidden="true" className="w-4 h-4" />선택한 {chosen.length}명 폴더 준비</button>
+          <button type="button" className="sketch-btn-primary min-h-11 px-4 py-2 text-sm font-bold inline-flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed" disabled={Boolean(busy) || !chosen.length || !googleAuth?.accessToken} onClick={() => prepare()}><FolderPlus aria-hidden="true" className="w-4 h-4" />선택한 {chosen.length}명 폴더 준비</button>
           {!googleAuth?.accessToken && <p className="text-sm text-[#92400E]">구글 로그인 후 폴더를 준비할 수 있습니다.</p>}
-          {criteriaDirty && <p className="text-sm text-[#92400E]">주제별 피드백 기준의 변경 내용을 먼저 저장해 주세요.</p>}
-        </div>
+          </div>
+        </details>
 
         {workspace.length > 0 && <div className="space-y-4">
-          <label className="block text-sm font-bold">준비한 묶음 이어하기<select className={`${fieldClass} mt-1`} value={activeBatchId} disabled={Boolean(busy)} onChange={(event) => { setActiveBatchId(event.target.value); setActiveEntryId(''); }}>
+          {workspace.length > 1 && <details className="text-sm"><summary className="cursor-pointer py-2 font-bold text-[#475569]">다른 묶음 선택 · 작업 기록 {workspace.length}개</summary><label className="block text-sm font-bold">준비한 묶음 이어하기<select className={`${fieldClass} mt-1`} value={activeBatchId} disabled={Boolean(busy)} onChange={(event) => { setActiveBatchId(event.target.value); setActiveEntryId(''); }}>
             {workspace.map((batch) => <option key={batch.id} value={batch.id}>{batch.label} · {batch.entries.length}명 · 전송 {batch.entries.filter((entry) => entry.sentAt).length}명</option>)}
-          </select></label>
+          </select></label></details>}
           {activeBatch && <>
+            <p className="text-sm font-bold text-[#475569]">{activeBatch.label} · {activeBatch.entries.length}명 · 전송 {activeBatch.entries.filter((entry) => entry.sentAt).length}명</p>
+            {criteriaChanged && <p className="text-sm text-[#92400E] rounded-xl bg-[#FFFBEB] p-3">현재 주제 기준이 변경되었습니다. 이 묶음의 ‘기준 복사’는 준비 당시 기준을 사용합니다.</p>}
             <div className="flex flex-wrap gap-2">
               {activeBatch.folderUrl && <a className={buttonClass} href={activeBatch.folderUrl} target="_blank" rel="noopener noreferrer"><ExternalLink aria-hidden="true" className="w-4 h-4" />묶음 폴더 열기</a>}
               <a className={buttonClass} href="https://app.briskteaching.com/" target="_blank" rel="noopener noreferrer">Brisk 열기</a>
-              <button type="button" className={buttonClass} onClick={() => copyText(activeBatch.prompt)}><Copy aria-hidden="true" className="w-4 h-4" />이 묶음의 기준 복사</button>
               {activeBatch.entries.some((entry) => !entry.prepared) && <button type="button" className={buttonClass} disabled={Boolean(busy)} onClick={() => prepare(activeBatch)}>준비 실패·중단 문서 다시 준비</button>}
               <button type="button" className={buttonClass} disabled={Boolean(busy) || !activeBatch.entries.some((entry) => entry.prepared && !entry.sentAt)} onClick={importFeedback}><RefreshCw aria-hidden="true" className="w-4 h-4" />묶음 첨삭 가져오기</button>
             </div>
-            <p className="text-sm text-[#475569]">Brisk에서 이 폴더의 학생 문서를 선택하세요. 생성한 피드백을 각 문서에 삽입한 뒤 가져올 수 있습니다. 검토 중인 기준은 묶음을 준비한 시점의 기준입니다.</p>
             <div className="grid lg:grid-cols-[240px_minmax(0,1fr)] gap-4">
               <div className="flex flex-col gap-2" aria-label="묶음 학생 목록">{activeBatch.entries.map((entry) => {
                 const stale = !entry.sentAt && !isMatchingSubmission(recordFor(entry.number), entry);
@@ -258,7 +221,7 @@ export default function BatchFeedbackPanel({ topic, topics, students, config, go
         {copyFallback && <label className="block text-sm font-bold">복사할 피드백 요청문<textarea readOnly className={`${fieldClass} mt-1`} rows={6} value={copyFallback} onFocus={(event) => event.target.select()} /></label>}
         {storageError && <p role="alert" className="text-sm text-[#B91C1C]">{storageError}</p>}
         <p className="text-xs text-[#64748B]">묶음 작업 기록·검토 중인 조언은 현재 브라우저에 자동 저장되고, 준비한 독스는 내 Drive에 보관됩니다. 전송한 조언과 주제별 기준은 학급 데이터에 저장됩니다.</p>
-      </div>}
+      </div>
     </section>
   );
 }

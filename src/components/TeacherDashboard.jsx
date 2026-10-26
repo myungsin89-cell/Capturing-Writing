@@ -13,6 +13,7 @@ import {
 import { GrowthDiffModal } from './GrowthDiffView';
 import StudentShareModal from './StudentShareModal';
 import BatchFeedbackPanel from './BatchFeedbackPanel';
+import FeedbackCriteriaDialog from './FeedbackCriteriaDialog';
 import { buildFeedbackPrompt } from '../utils/batchFeedback';
 import {
   STAGE_META,
@@ -176,12 +177,19 @@ export default function TeacherDashboard({
   const [waitingDocReturn, setWaitingDocReturn] = useState(false);
   const [showPreviousFeedback, setShowPreviousFeedback] = useState(false);
   const [criteriaCopyFailed, setCriteriaCopyFailed] = useState(false);
+  const [isCriteriaDialogOpen, setIsCriteriaDialogOpen] = useState(false);
+  const [feedbackTab, setFeedbackTab] = useState('individual');
   const docOpenedTimeRef = useRef(0);
 
   const currentTopic = topics.find((t) => t.id === openedTopicId) || null;
   const currentFeedbackPrompt = currentTopic
     ? buildFeedbackPrompt(currentTopic, currentTopic.feedbackCriteria)
     : DEFAULT_BRISK_PROMPT;
+
+  useEffect(() => {
+    setFeedbackTab('individual');
+    setIsCriteriaDialogOpen(false);
+  }, [openedTopicId]);
 
   const rawSelectedStudent =
     students.find((s) => String(s.number) === String(selectedStudentNumber)) ||
@@ -1767,7 +1775,7 @@ export default function TeacherDashboard({
       )}
 
       {/* 상단 바: [← 주제 책장으로] + 현재 열린 주제 제목 + [학급 전체 마감] */}
-      <div className="w-full bg-white border border-[#CBD5E1] rounded-2xl px-5 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-4 shadow-2xs">
+      <div className="w-full bg-white border border-[#CBD5E1] rounded-2xl px-5 py-3.5 flex flex-col xl:flex-row xl:items-center justify-between gap-4 shadow-2xs">
         <div className="flex items-center gap-3 min-w-0 flex-wrap">
           <button
             type="button"
@@ -1790,7 +1798,7 @@ export default function TeacherDashboard({
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5 shrink-0">
+        <div className="flex flex-wrap items-center gap-2.5">
           <button
             type="button"
             onClick={() => setIsShareModalOpen(true)}
@@ -1798,6 +1806,13 @@ export default function TeacherDashboard({
           >
             <QrCode className="w-4 h-4 text-[#1B4332]" />
             <span>학생 링크 · QR 안내</span>
+          </button>
+
+          <button type="button" onClick={() => setIsCriteriaDialogOpen(true)}
+            className="sketch-btn-secondary min-h-11 px-3.5 py-2 text-xs sm:text-sm font-bold flex items-center gap-1.5"
+            title={currentTopic.feedbackCriteria ? '이 주제에 저장한 피드백 기준 수정' : '이 주제의 피드백 기준 설정'}>
+            <Pencil className="h-4 w-4" aria-hidden="true" />
+            <span>피드백 기준</span>
           </button>
 
           <button
@@ -1825,18 +1840,47 @@ export default function TeacherDashboard({
         </div>
       </div>
 
+      {isCriteriaDialogOpen && <FeedbackCriteriaDialog
+        key={currentTopic.id} topic={currentTopic} topics={allTopics}
+        onSave={onSaveFeedbackCriteria}
+        onClose={() => setIsCriteriaDialogOpen(false)}
+        onSaved={() => showToast('이 주제의 피드백 기준을 저장했습니다.')}
+      />}
+
+      <div role="tablist" aria-label="피드백 작업 선택" className="flex flex-wrap gap-2 border-b border-[#CBD5E1] pb-3"
+        onKeyDown={(event) => {
+          const keys = ['ArrowLeft', 'ArrowRight', 'Home', 'End'];
+          if (!keys.includes(event.key)) return;
+          event.preventDefault();
+          const tabs = Array.from(event.currentTarget.querySelectorAll('[role="tab"]'));
+          const index = tabs.indexOf(document.activeElement);
+          const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+          const next = tabs[nextIndex];
+          setFeedbackTab(next.dataset.feedbackTab);
+          next.focus();
+        }}>
+        {[['individual', '개인 피드백'], ['batch', '묶음 피드백']].map(([id, label]) => <button
+          key={id} type="button" role="tab" id={`feedback-tab-${id}`} data-feedback-tab={id}
+          aria-controls={`feedback-panel-${id}`} aria-selected={feedbackTab === id} tabIndex={feedbackTab === id ? 0 : -1}
+          onClick={() => setFeedbackTab(id)}
+          className={`min-h-11 rounded-xl px-5 py-2.5 text-sm font-bold cursor-pointer border ${feedbackTab === id ? 'border-[#1B4332] bg-[#1B4332] text-white' : 'border-[#CBD5E1] bg-white text-[#475569] hover:bg-[#F2F9F5]'}`}>
+          {label}{id === 'batch' && <span className={`ml-2 text-xs ${feedbackTab === id ? 'text-white' : 'text-[#64748B]'}`}>대기 {students.filter((student) => isSubmittedWritingStatus(getStudentTopicData(student, currentTopic)?.status)).length}명</span>}
+        </button>)}
+      </div>
+
+      <div id="feedback-panel-batch" role="tabpanel" aria-labelledby="feedback-tab-batch" hidden={feedbackTab !== 'batch'}>
       <BatchFeedbackPanel
         key={`${googleAuth?.user?.email || config.spreadsheetId || 'local'}:${config.activeClassId}:${currentTopic.id}`}
         topic={currentTopic}
-        topics={allTopics}
         students={students}
         config={config}
         googleAuth={googleAuth}
-        onSaveCriteria={onSaveFeedbackCriteria}
         onSendFeedback={onSendBatchFeedback}
       />
+      </div>
 
       {/* 2. 3단 와이드 데스크톱 워크스페이스 (좌측 명단 3 : 가운데 학생 글 5 : 우측 첨삭 패널 4) */}
+      <div id="feedback-panel-individual" role="tabpanel" aria-labelledby="feedback-tab-individual" hidden={feedbackTab !== 'individual'}>
       <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
         {/* [좌측 3칸] 우리 반 학생 명단 사이드바 (26명 이상이어도 독립 스크롤 고정 + 질문·첨삭 대기 상단 배치) */}
         <div className="lg:col-span-3 sketch-card bg-white p-5 flex flex-col max-h-[420px] lg:max-h-[calc(100dvh-165px)] lg:sticky lg:top-20 overflow-hidden">
@@ -2335,25 +2379,17 @@ export default function TeacherDashboard({
                   )}
                 </div>
 
-                <div className="rounded-xl border border-[#B7E4C7] bg-white p-3 space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="text-xs font-bold text-[#1B4332]">
-                      {currentTopic.feedbackCriteria ? '이 주제에 저장한 피드백 기준' : '기본 피드백 기준 사용 중'}
-                    </span>
+                <div className="flex flex-wrap items-center gap-2">
                     <button
                       type="button"
                       onClick={handleCopyTopicFeedbackCriteria}
                       className="sketch-btn-secondary min-h-11 px-3 py-2 text-xs font-bold inline-flex items-center justify-center gap-1.5"
                     >
                       <Copy className="w-3.5 h-3.5" aria-hidden="true" />
-                      <span>이 주제 기준 복사</span>
+                      <span>기준 복사</span>
                     </button>
-                  </div>
-                  <p className="text-xs text-[#475569] leading-relaxed">
-                    위쪽 ‘주제별 피드백 기준’에 한 번 저장하면 모든 학생의 개인·묶음 첨삭에 함께 사용합니다. 복사한 기준은 Brisk에 붙여 넣어 주세요.
-                  </p>
-                  <details open={criteriaCopyFailed || undefined} className="text-xs text-[#475569]">
-                    <summary className="cursor-pointer py-2 font-bold">복사할 기준 보기</summary>
+                  {criteriaCopyFailed && <div className="w-full text-xs text-[#475569]">
+                    <p className="font-bold">기준 내용을 직접 선택해 복사해 주세요.</p>
                     <textarea
                       readOnly
                       aria-label="개인 첨삭에 복사할 주제 기준"
@@ -2362,17 +2398,14 @@ export default function TeacherDashboard({
                       rows={6}
                       className="mt-1 w-full rounded-xl border border-[#CBD5E1] bg-[#FBFBF9] p-3 text-sm leading-relaxed focus:outline-2 focus:outline-[#2D6A4F]"
                     />
-                  </details>
-                </div>
-
-                <div className="grid grid-cols-2 gap-2">
+                  </div>}
                   <button
                     type="button"
                     onClick={() => handleOpenDocWithBrisk(selectedStudent)}
-                    className="sketch-btn-primary px-3 py-2 text-xs font-bold flex items-center justify-center gap-1.5"
+                    className="sketch-btn-primary min-h-11 px-3 py-2 text-xs font-bold flex items-center justify-center gap-1.5"
                   >
                     <HandDrawnDocIcon size={14} color="#FFFFFF" />
-                    <span>1. 학생 독스 열기</span>
+                    <span>학생 독스 열기</span>
                     <ExternalLink className="w-3.5 h-3.5" />
                   </button>
 
@@ -2380,7 +2413,7 @@ export default function TeacherDashboard({
                     type="button"
                     onClick={() => handlePullFromDoc(false)}
                     disabled={isPullingDoc}
-                    className={`px-3 py-2 text-xs font-bold flex items-center justify-center gap-1.5 rounded-xl border transition cursor-pointer ${
+                    className={`min-h-11 px-3 py-2 text-xs font-bold flex items-center justify-center gap-1.5 rounded-xl border transition cursor-pointer ${
                       waitingDocReturn
                         ? 'bg-[#FEF9C3] border-2 border-[#F59E0B] text-[#92400E] shadow-xs'
                         : 'sketch-btn-secondary'
@@ -2388,7 +2421,7 @@ export default function TeacherDashboard({
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isPullingDoc ? 'animate-spin' : ''}`} />
                     <span>
-                      {isPullingDoc ? '가져오는 중...' : '2. 독스 첨삭 자동 가져오기'}
+                      {isPullingDoc ? '가져오는 중...' : '첨삭 가져오기'}
                     </span>
                   </button>
                 </div>
@@ -2549,7 +2582,7 @@ export default function TeacherDashboard({
               {/* [핵심 2] 큼직하고 넓은 『선생님의 종합 첨삭 노트』 (Brisk 복사·붙여넣기 메인 영역!) */}
               <div className="flex-1 flex flex-col">
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-sm font-bold text-[#1B4332] flex items-center gap-1.5">
+                  <label htmlFor="individual-feedback-note" className="text-sm font-bold text-[#1B4332] flex items-center gap-1.5">
                     <HandDrawnSparkleIcon size={17} color="#1B4332" />
                     <span>선생님의 종합 첨삭 노트</span>
                   </label>
@@ -2565,6 +2598,7 @@ export default function TeacherDashboard({
                 </div>
 
                 <textarea
+                  id="individual-feedback-note"
                   rows={10}
                   value={feedbackNote}
                   onChange={(e) => setFeedbackNote(e.target.value)}
@@ -2692,6 +2726,8 @@ export default function TeacherDashboard({
             })()}
           </form>
         )}
+      </div>
+
       </div>
 
       {/* [처음 글 · 고쳐 쓴 글 크게 비교하기] 초대형 모달 */}
