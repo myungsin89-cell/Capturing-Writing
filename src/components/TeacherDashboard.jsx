@@ -54,6 +54,8 @@ export default function TeacherDashboard({
   topics,
   selectedTopicId,
   onSelectTopic,
+  openedTopicId: propOpenedTopicId,
+  onChangeOpenedTopicId,
   onCreateNewTopic,
   onDeleteTopic,
   onManageStudents,
@@ -104,7 +106,13 @@ export default function TeacherDashboard({
   const [isShareModalOpen, setIsShareModalOpen] = useState(false);
 
   // null이면 [우리 반 글쓰기 주제 책장] 화면, 값이 있으면 해당 [주제의 학생 첨삭 관리실] 화면!
-  const [openedTopicId, setOpenedTopicId] = useState(null);
+  const [localOpenedTopicId, setLocalOpenedTopicId] = useState(null);
+  const openedTopicId =
+    propOpenedTopicId === undefined ? localOpenedTopicId : propOpenedTopicId;
+  const setOpenedTopicId = (topicId) => {
+    setLocalOpenedTopicId(topicId);
+    onChangeOpenedTopicId?.(topicId);
+  };
 
   const [selectedStudentNumber, setSelectedStudentNumber] = useState(
     () => students[0]?.number || '1'

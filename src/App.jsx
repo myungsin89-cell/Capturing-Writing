@@ -84,6 +84,7 @@ export default function App() {
   const [activeStudent, setActiveStudent] = useState(null);
   const [isTeacherPreview, setIsTeacherPreview] = useState(false);
   const [teacherPreviewTopicId, setTeacherPreviewTopicId] = useState('');
+  const [teacherOpenedTopicId, setTeacherOpenedTopicId] = useState(null);
 
   const [gasUrl, setGasUrl] = useState(
     () => urlGasUrl || localStorage.getItem(STORAGE_KEYS.GAS_URL) || ''
@@ -910,6 +911,7 @@ export default function App() {
 
   const handleSelectClass = (cls) => {
     if (!cls) return;
+    setTeacherOpenedTopicId(null);
     const classTopics = topics.filter(
       (topic) => String(topic.classId || legacyClassId) === String(cls.id)
     );
@@ -1512,6 +1514,8 @@ export default function App() {
             topics={visibleTopics}
             selectedTopicId={selectedTopicId}
             onSelectTopic={setSelectedTopicId}
+            openedTopicId={teacherOpenedTopicId}
+            onChangeOpenedTopicId={setTeacherOpenedTopicId}
             onCreateNewTopic={handleCreateNewTopic}
             onDeleteTopic={handleDeleteTopic}
             onManageStudents={handleManageStudents}
