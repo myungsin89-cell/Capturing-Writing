@@ -92,6 +92,43 @@ export function mergeImportedFeedback(current = {}, imported = {}) {
   return { note, comments };
 }
 
+export function nextRecordTimestamp(records = [], nowMs = Date.now()) {
+  const latestRecordTime = records.reduce((latest, record) => {
+    const parsed = Date.parse(record?.updatedAtIso || '');
+    return Number.isFinite(parsed) ? Math.max(latest, parsed) : latest;
+  }, 0);
+  return new Date(Math.max(nowMs, latestRecordTime + 1)).toISOString();
+}
+
+export function updateWritingFeedbackRecord(record = {}, {
+  status,
+  locked,
+  teacherNote,
+  feedbackItems,
+  updatedAtIso
+}) {
+  const nextFeedbackItems = Array.isArray(feedbackItems) ? feedbackItems : [];
+  const nextRecord = {
+    ...record,
+    status: status || record.status,
+    locked: locked !== undefined ? locked : record.locked,
+    teacherNote: teacherNote !== undefined ? teacherNote : record.teacherNote,
+    feedbackItems: feedbackItems !== undefined ? nextFeedbackItems : record.feedbackItems,
+    updatedAtIso: updatedAtIso || record.updatedAtIso
+  };
+  if (Array.isArray(record.draftHistory) && record.draftHistory.length > 0 &&
+      (teacherNote !== undefined || feedbackItems !== undefined)) {
+    nextRecord.draftHistory = record.draftHistory.map((draft, index, all) => index === all.length - 1
+      ? {
+          ...draft,
+          teacherNote: teacherNote !== undefined ? teacherNote : draft.teacherNote,
+          feedbackItems: feedbackItems !== undefined ? nextFeedbackItems : draft.feedbackItems
+        }
+      : draft);
+  }
+  return nextRecord;
+}
+
 export function wasBatchFeedbackDelivered(record, entry) {
   return Boolean(entry?.id && record?.batchFeedbackReceipt?.entryId === entry.id);
 }
@@ -101,11 +138,11 @@ export function applyFeedbackToStudent(student, { topicId, activeTopicId, entry,
   if (!isMatchingSubmission(record, entry)) return null;
   const feedbackItems = (entry.comments || []).filter((item) => item.comment?.trim());
   const nextRecord = {
-    ...record, status: 'FEEDBACK_DONE', locked: false,
-    teacherNote: entry.note || '', feedbackItems, updatedAtIso: nowIso,
-    batchFeedbackReceipt: { entryId: entry.id, sentAt: nowIso },
-    draftHistory: record.draftHistory?.map((draft, index, all) => index === all.length - 1
-      ? { ...draft, teacherNote: entry.note || '', feedbackItems } : draft)
+    ...updateWritingFeedbackRecord(record, {
+      status: 'FEEDBACK_DONE', locked: false, teacherNote: entry.note || '',
+      feedbackItems, updatedAtIso: nowIso
+    }),
+    batchFeedbackReceipt: { entryId: entry.id, sentAt: nowIso }
   };
   return String(topicId) === String(activeTopicId)
     ? { ...student, ...nextRecord }

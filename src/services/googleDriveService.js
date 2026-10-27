@@ -12,7 +12,10 @@
 import gasCodeRaw from '../../gas/Code.gs?raw';
 import gasManifestRaw from '../../gas/appsscript.json?raw';
 import { prepareFeedbackBatch } from './batchFeedbackDrive';
-import { applyFeedbackToStudent, getFeedbackTopicRecord, hasFeedbackContent, wasBatchFeedbackDelivered } from '../utils/batchFeedback';
+import {
+  applyFeedbackToStudent, getFeedbackTopicRecord, hasFeedbackContent,
+  nextRecordTimestamp, wasBatchFeedbackDelivered
+} from '../utils/batchFeedback';
 
 export function prepareFeedbackBatchInDrive(accessToken, batch, onProgress) {
   if (!accessToken) throw new Error('구글 로그인 후 묶음 피드백을 준비해 주세요.');
@@ -532,7 +535,7 @@ async function writeFullStateToSpreadsheet(
         }
         feedbackStudent = topic && target && applyFeedbackToStudent(
           { ...target, classId: target.classId || legacyClassId },
-          { topicId, activeTopicId, entry, nowIso: new Date().toISOString() }
+          { topicId, activeTopicId, entry, nowIso: nextRecordTimestamp([target]) }
         );
         if (!feedbackStudent) {
           const error = new Error('학생의 제출 상태가 바뀌었습니다. 최신 제출본을 확인하고 다시 준비해 주세요.');

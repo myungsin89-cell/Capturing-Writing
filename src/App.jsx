@@ -23,7 +23,10 @@ import {
   removeLegacyDemoState
 } from './utils/legacyDemoMigration';
 import { shouldAutoSaveTeacherState } from './utils/syncPolicy';
-import { getFeedbackTopicRecord, isMatchingSubmission, normalizeFeedbackCriteria, wasBatchFeedbackDelivered } from './utils/batchFeedback';
+import {
+  getFeedbackTopicRecord, isMatchingSubmission, nextRecordTimestamp,
+  normalizeFeedbackCriteria, updateWritingFeedbackRecord, wasBatchFeedbackDelivered
+} from './utils/batchFeedback';
 import { getUsableDraftHistory, repairLeakedDraftHistory, transitionStudentToNewTopic } from './utils/topicTransition.js';
 import { createStudentRequestGuard } from './utils/studentRequestGuard.js';
 
@@ -1081,8 +1084,6 @@ export default function App() {
     teacherNote,
     feedbackItems
   }) => {
-    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-    const nowIso = new Date().toISOString();
     const targetSt = students.find(
       (s) => belongsToActiveClass(s) && String(s.number) === String(number)
     );
@@ -1091,39 +1092,35 @@ export default function App() {
     const targetTopicData = isActiveTopic
       ? targetSt
       : { ...targetSt, ...(targetSt?.historyByTopic?.[targetTopicId] || {}) };
+    const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+    // 학생 기기의 시간이 교사 기기보다 앞서 있어도, 첨삭 완료가 해당 제출보다 최신이 되게 합니다.
+    const nowIso = nextRecordTimestamp([targetSt, targetTopicData]);
 
     setStudents((prev) =>
       prev.map((st) => {
         if (!belongsToActiveClass(st) || String(st.number) !== String(number)) return st;
         if (!isActiveTopic) {
           const previousTopicData = st.historyByTopic?.[targetTopicId] || {};
+          const nextTopicData = updateWritingFeedbackRecord(previousTopicData, {
+            status,
+            locked,
+            teacherNote,
+            feedbackItems,
+            updatedAtIso: nowIso
+          });
           return {
             ...st,
             historyByTopic: {
               ...(st.historyByTopic || {}),
-              [targetTopicId]: {
-                ...previousTopicData,
-                status: status || previousTopicData.status,
-                locked: locked !== undefined ? locked : previousTopicData.locked,
-                teacherNote:
-                  teacherNote !== undefined ? teacherNote : previousTopicData.teacherNote,
-                feedbackItems:
-                  feedbackItems !== undefined ? feedbackItems : previousTopicData.feedbackItems,
-                updatedAtIso: nowIso
-              }
+              [targetTopicId]: nextTopicData
             },
             updatedAtIso: nowIso
           };
         }
-        return {
+        return updateWritingFeedbackRecord({
           ...st,
-          status: status || st.status,
-          locked: locked !== undefined ? locked : st.locked,
-          teacherNote: teacherNote !== undefined ? teacherNote : st.teacherNote,
-          feedbackItems: feedbackItems !== undefined ? feedbackItems : st.feedbackItems,
           updatedAt: `오늘 ${now}`,
-          updatedAtIso: nowIso
-        };
+        }, { status, locked, teacherNote, feedbackItems, updatedAtIso: nowIso });
       })
     );
 

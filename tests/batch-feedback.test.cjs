@@ -80,6 +80,34 @@ test('브릭스트 첨삭은 기존 조언을 보존하며 즉시 합치고 중�
   assert.deepEqual(repeated, merged);
 });
 
+test('회수·재제출보다 첨삭 완료를 최신으로 기록하고 해당 차수에도 첨삭을 남긴다', async () => {
+  const { nextRecordTimestamp, updateWritingFeedbackRecord } = await import(helperUrl);
+  const futureSubmission = {
+    ...submission(),
+    status: 'REVISION_SUBMITTED',
+    updatedAtIso: '2030-01-01T00:00:00.000Z',
+    draftHistory: [
+      { round: 1, text: '첫 글', teacherNote: '첫 첨삭' },
+      { round: 2, text: '회수 후 다시 제출한 글', teacherNote: '', feedbackItems: [] }
+    ]
+  };
+  const completedAt = nextRecordTimestamp([futureSubmission], Date.parse('2026-01-01T00:00:00.000Z'));
+  assert.equal(completedAt, '2030-01-01T00:00:00.001Z');
+
+  const completed = updateWritingFeedbackRecord(futureSubmission, {
+    status: 'FEEDBACK_DONE',
+    locked: false,
+    teacherNote: '두 번째 첨삭',
+    feedbackItems: [{ quote: '다시 제출한 글', comment: '좋아요' }],
+    updatedAtIso: completedAt
+  });
+  assert.equal(completed.status, 'FEEDBACK_DONE');
+  assert.equal(completed.locked, false);
+  assert.equal(completed.draftHistory[0].teacherNote, '첫 첨삭');
+  assert.equal(completed.draftHistory[1].teacherNote, '두 번째 첨삭');
+  assert.equal(completed.draftHistory[1].feedbackItems.length, 1);
+});
+
 test('검토한 피드백은 해당 학생·해당 주제만 수정 모드로 열고 차수에 기록한다', async () => {
   const { applyFeedbackToStudent, getSubmissionSnapshot } = await import(helperUrl);
   const record = submission();
