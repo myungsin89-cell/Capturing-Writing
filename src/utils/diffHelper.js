@@ -192,6 +192,50 @@ export function getStudentDraftPages(student) {
   }));
 }
 
+/**
+ * 현재 필드에서 이전 차수로 보관된 첨삭까지 합쳐, 학생이 다시 볼 수 있는
+ * 차수별 피드백만 반환합니다. 예전 데이터처럼 최신 첨삭이 최상위 필드에만
+ * 남아 있는 경우에도 마지막 글에 연결합니다.
+ */
+export function getStudentFeedbackPages(student) {
+  if (!student) return [];
+
+  const draftPages = getStudentDraftPages(student);
+  const topLevelNote = student.teacherNote || '';
+  const topLevelItems = Array.isArray(student.feedbackItems) ? student.feedbackItems : [];
+
+  if (draftPages.length === 0) {
+    if (!topLevelNote.trim() && topLevelItems.length === 0) return [];
+    return [{
+      round: 1,
+      label: '1차 글',
+      text: '',
+      teacherNote: topLevelNote,
+      feedbackItems: topLevelItems
+    }];
+  }
+
+  return draftPages
+    .map((page, idx) => {
+      const isLatest = idx === draftPages.length - 1;
+      const pageItems = Array.isArray(page.feedbackItems) ? page.feedbackItems : [];
+      return {
+        ...page,
+        teacherNote: page.teacherNote || (isLatest ? topLevelNote : ''),
+        feedbackItems: pageItems.length > 0
+          ? pageItems
+          : isLatest
+          ? topLevelItems
+          : []
+      };
+    })
+    .filter(
+      (page) =>
+        Boolean(page.teacherNote && page.teacherNote.trim()) ||
+        page.feedbackItems.length > 0
+    );
+}
+
 export function isFinalWritingStatus(status) {
   return status === 'FINAL_COMPLETED';
 }

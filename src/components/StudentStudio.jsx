@@ -18,6 +18,7 @@ import {
   renderTextWithHighlight,
   renderTextWithGreenAdditions,
   getStudentDraftPages,
+  getStudentFeedbackPages,
   isFinalWritingStatus
 } from '../utils/diffHelper';
 import {
@@ -72,6 +73,7 @@ export default function StudentStudio({
   const [toastMsg, setToastMsg] = useState('');
   const [showGreenText, setShowGreenText] = useState(false);
   const [viewingPageIdx, setViewingPageIdx] = useState(null); // null이면 현재 작성·수정 공책, 숫자면 해당 차수 글 보기
+  const [selectedFeedbackRound, setSelectedFeedbackRound] = useState(null);
   const [recoveryData, setRecoveryData] = useState(null);
   const textareaRef = useRef(null);
   const questionSubmittingRef = useRef(false);
@@ -113,6 +115,11 @@ export default function StudentStudio({
   const selectedTopic = topics.find((t) => t.id === openedTopicId) || null;
   const topicStudentData = getStudentDataForTopic(selectedTopic);
   const draftPages = getStudentDraftPages(topicStudentData);
+  const feedbackPages = getStudentFeedbackPages(topicStudentData);
+  const activeFeedbackPage =
+    feedbackPages.find((page) => page.round === selectedFeedbackRound) ||
+    feedbackPages[feedbackPages.length - 1] ||
+    null;
   const draftBase = getDraftBase(topicStudentData || {});
   const canEditCompletedDraft = isFinalWritingStatus(topicStudentData?.status) && isEditingCompleted;
   const canEditDraft = Boolean(topicStudentData) && !isTeacherPreview && !isSubmissionAccepted &&
@@ -137,7 +144,8 @@ export default function StudentStudio({
       (!selectedTopic?.id || !q.topicId || q.topicId === selectedTopic.id)
   );
 
-  const feedbackItems = topicStudentData?.feedbackItems || [];
+  const feedbackItems = activeFeedbackPage?.feedbackItems || [];
+  const feedbackTeacherNote = activeFeedbackPage?.teacherNote || '';
 
   const currentWritingStage = Math.max(1, draftPages.length + 1);
 
@@ -147,6 +155,7 @@ export default function StudentStudio({
     setHighlightedQuote('');
     setShowGreenText(false);
     setViewingPageIdx(null);
+    setSelectedFeedbackRound(null);
     setIsEditingCompleted(Boolean(draft.loadState?.editingCompleted));
     setIsRecalled(Boolean(topicStudentData.recalled));
     setRecoveryData(null);
@@ -986,6 +995,35 @@ export default function StudentStudio({
               )}
             </div>
 
+            {feedbackPages.length > 0 && (
+              <div className="p-3 rounded-2xl bg-[#F2F9F5] border border-[#B7E4C7] space-y-2">
+                <div className="text-xs font-bold text-[#2D6A4F]">지난 피드백 보기</div>
+                <div className="flex flex-wrap gap-1.5">
+                  {feedbackPages.map((page, idx) => {
+                    const isActive = page.round === activeFeedbackPage?.round;
+                    return (
+                      <button
+                        key={`feedback-${page.round}`}
+                        type="button"
+                        onClick={() => {
+                          setSelectedFeedbackRound(page.round);
+                          setHighlightedQuote('');
+                        }}
+                        className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
+                          isActive
+                            ? 'bg-[#1B4332] border-[#1B4332] text-white'
+                            : 'bg-white border-[#86EFAC] text-[#1B4332] hover:bg-[#D8F3DC]'
+                        }`}
+                      >
+                        {page.round}차 피드백
+                        {idx === feedbackPages.length - 1 ? ' · 최근' : ''}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {isFinalCompleted && (
               <div className="p-4 rounded-2xl bg-[#D8F3DC] border-2 border-[#52B788] text-[#1B4332] flex items-center gap-3">
                 <span className="text-2xl shrink-0">🏆</span>
@@ -998,7 +1036,7 @@ export default function StudentStudio({
               </div>
             )}
 
-            {!topicStudentData?.teacherNote && feedbackItems.length === 0 ? (
+            {!activeFeedbackPage ? (
               isFinalCompleted ? (
                 <div className="py-12 px-6 text-center rounded-2xl bg-white border border-[#CBD5E1] space-y-2">
                   <p className="text-base font-bold text-[#1B4332]">
@@ -1021,13 +1059,13 @@ export default function StudentStudio({
               )
             ) : (
               <div className="space-y-4">
-                {topicStudentData?.teacherNote && (
+                {feedbackTeacherNote && (
                   <div className="p-5 rounded-2xl bg-white border-2 border-[#1B4332] text-sm sm:text-[15px] text-[#1E293B] leading-relaxed whitespace-pre-wrap shadow-2xs">
                     <div className="font-bold text-[#1B4332] pb-2 mb-2.5 border-b border-[#D8F3DC] flex items-center gap-1.5">
                       <HandDrawnSparkleIcon size={16} color="#1B4332" />
                       <span>선생님의 종합 첨삭 노트</span>
                     </div>
-                    {topicStudentData.teacherNote}
+                    {feedbackTeacherNote}
                   </div>
                 )}
 
