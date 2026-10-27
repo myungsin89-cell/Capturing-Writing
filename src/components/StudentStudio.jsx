@@ -1,15 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useStudentDraft from '../hooks/useStudentDraft';
+import useStudentFeedbackPanel from '../hooks/useStudentFeedbackPanel';
 import { getDraftBase, getDraftOwner } from '../utils/studentDraftStorage';
 import DraftRecoveryDialog from './DraftRecoveryDialog';
 import {
   HandDrawnNotebookLogo,
   HandDrawnPencilIcon,
   HandDrawnDiffIcon,
-  HandDrawnChatIcon,
-  HandDrawnSparkleIcon,
-  HandDrawnCheckIcon,
-  HandDrawnLeafIcon,
   HandDrawnArrowRightIcon
 } from './HandDrawnIcons';
 import { GrowthDiffModal } from './GrowthDiffView';
@@ -28,12 +25,15 @@ import {
   BookOpen,
   CornerDownLeft,
   ArrowLeft,
-  ChevronLeft,
-  ChevronRight,
-  Sparkles,
   History,
   Copy,
-  Download
+  Download,
+  Check,
+  MessageSquare,
+  PanelRightClose,
+  PanelRightOpen,
+  MoreHorizontal,
+  X
 } from 'lucide-react';
 
 export default function StudentStudio({
@@ -75,8 +75,13 @@ export default function StudentStudio({
   const [viewingPageIdx, setViewingPageIdx] = useState(null); // null이면 현재 작성·수정 공책, 숫자면 해당 차수 글 보기
   const [selectedFeedbackRound, setSelectedFeedbackRound] = useState(null);
   const [recoveryData, setRecoveryData] = useState(null);
+  const [isQuestionOpen, setIsQuestionOpen] = useState(false);
+  const [focusQuestionRequested, setFocusQuestionRequested] = useState(false);
   const textareaRef = useRef(null);
   const questionSubmittingRef = useRef(false);
+  const questionInputRef = useRef(null);
+  const toolsRef = useRef(null);
+  const feedbackToggleRef = useRef(null);
 
   const currentStudent =
     students.find((s) => String(s.number) === String(activeStudent?.number)) ||
@@ -146,6 +151,41 @@ export default function StudentStudio({
 
   const feedbackItems = activeFeedbackPage?.feedbackItems || [];
   const feedbackTeacherNote = activeFeedbackPage?.teacherNote || '';
+  const [isFeedbackOpen, setFeedbackOpen] = useStudentFeedbackPanel(
+    getDraftOwner({ spreadsheetId: config.spreadsheetId || '', classId: config.activeClassId || '', student: currentStudent, topicId: openedTopicId }),
+    topicStudentData?.status === 'FEEDBACK_DONE' && feedbackPages.length > 0
+  );
+
+  useEffect(() => {
+    setIsQuestionOpen(false);
+    setFocusQuestionRequested(false);
+    if (toolsRef.current) toolsRef.current.open = false;
+  }, [openedTopicId, currentStudent?.classId, currentStudent?.number, currentStudent?.name]);
+
+  useEffect(() => {
+    if (!isFeedbackOpen || !isQuestionOpen || !focusQuestionRequested) return;
+    questionInputRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    questionInputRef.current?.focus({ preventScroll: true });
+    setFocusQuestionRequested(false);
+  }, [isFeedbackOpen, isQuestionOpen, focusQuestionRequested]);
+
+  useEffect(() => {
+    const closeOutside = (event) => {
+      if (toolsRef.current?.open && !toolsRef.current.contains(event.target)) toolsRef.current.open = false;
+    };
+    const closeOnEscape = (event) => {
+      if (event.key === 'Escape' && toolsRef.current?.open) {
+        toolsRef.current.open = false;
+        toolsRef.current.querySelector('summary')?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', closeOutside);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, []);
 
   // Grow the editor instead of letting a scrollbar narrow the writing surface.
   useEffect(() => {
@@ -485,8 +525,8 @@ export default function StudentStudio({
                     <div className="flex items-center gap-1.5 flex-wrap">
                       {isTopicFinal ? (
                         <span className="px-2.5 py-0.5 rounded-full bg-[#D8F3DC] border border-[#2D6A4F] text-[#1B4332] text-xs font-bold flex items-center gap-1">
-                          <span>🎉</span>
-                          <span>최종 완성 (수고했어요!)</span>
+                          <Check className="w-3.5 h-3.5" aria-hidden="true" />
+                          <span>최종 완성</span>
                         </span>
                       ) : tp.isActive ? (
                         <span className="px-2.5 py-0.5 rounded-full bg-[#1B4332] text-white text-xs font-bold">
@@ -504,11 +544,11 @@ export default function StudentStudio({
                       )}
                     </div>
 
-                    <span
+                    {!isTopicFinal && <span
                       className={`px-2.5 py-0.5 rounded-full text-xs font-bold border ${meta.badgeBg} ${meta.badgeBorder} ${meta.badgeText}`}
                     >
                       {meta.shortLabel}
-                    </span>
+                    </span>}
                   </div>
 
                   {/* 공책 제목 및 안내문 */}
@@ -569,19 +609,48 @@ export default function StudentStudio({
     .replace(/\r\n/g, '\n')
     .split(/\n\s*\n|\n/)
     .filter((p) => p.trim().length > 0).length;
+  const isViewingText = Boolean(highlightedQuote || showGreenText || viewingPageIdx !== null);
+  const visibleTitle = viewingPageIdx !== null
+    ? draftPages[viewingPageIdx]?.pieceTitle || displayPieceTitle
+    : displayPieceTitle;
+
+  const runTool = (action) => {
+    if (toolsRef.current) toolsRef.current.open = false;
+    action();
+  };
+  const resumeWriting = () => {
+    setHighlightedQuote('');
+    setShowGreenText(false);
+    setViewingPageIdx(null);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+  const startCompletedRevision = () => {
+    setIsEditingCompleted(true);
+    resumeWriting();
+  };
+  const closeFeedback = () => {
+    setFeedbackOpen(false);
+    setHighlightedQuote('');
+    setIsQuestionOpen(false);
+    feedbackToggleRef.current?.focus();
+  };
+  const openQuestion = () => {
+    setFeedbackOpen(true);
+    setIsQuestionOpen(true);
+    setFocusQuestionRequested(true);
+  };
 
   return (
-    <div className="notebook-workspace flex-1 w-full px-6 lg:px-10 py-5 flex flex-col gap-4">
+    <div className="student-quiet notebook-workspace flex-1 w-full px-6 lg:px-10 py-5 flex flex-col gap-5">
       {toastMsg && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-2xl bg-[#1B4332] text-white px-5 py-3 shadow-lg flex items-center gap-2 text-sm font-bold">
-          <HandDrawnCheckIcon size={18} color="#52B788" />
+        <div role="status" className="fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-xl bg-[#1B4332] text-white px-5 py-3 shadow-lg flex items-center gap-2 text-sm">
+          <Check className="w-4 h-4 shrink-0" aria-hidden="true" />
           <span>{toastMsg}</span>
         </div>
       )}
 
-      {/* 상단 바: [← 내 글쓰기 책장으로] + 현재 공책 제목 + [처음 글과 크게 비교하기] */}
-      <div className="w-full flex items-center justify-between gap-4 flex-wrap bg-white border border-[#CBD5E1] rounded-2xl px-5 py-3.5 shadow-2xs">
-        <div className="flex items-center gap-3 min-w-0">
+      <header className="student-notebook-toolbar">
+        <div className="flex items-center gap-3 min-w-0 flex-wrap">
           <button
             type="button"
             onClick={() => {
@@ -589,621 +658,294 @@ export default function StudentStudio({
               else if (draft.flush()) setOpenedTopicId(null);
               else showToast('아직 기기에 저장되지 않았어요. 지금 글을 먼저 복사하거나 파일로 보관해 주세요.');
             }}
-            className="sketch-btn-secondary px-3.5 py-2 text-xs sm:text-sm font-bold flex items-center gap-1.5 shrink-0"
+            className="student-text-button"
           >
-            <ArrowLeft className="w-4 h-4" />
-            <span>{isTeacherPreview ? '선생님 관리로 돌아가기' : '내 글쓰기 책장으로'}</span>
+            <ArrowLeft className="w-4 h-4" aria-hidden="true" />
+            {isTeacherPreview ? '선생님 관리로' : '책장으로'}
           </button>
-
-          <span className="px-3 py-1 rounded-xl bg-[#1B4332] text-white text-xs sm:text-sm font-bold shrink-0">
-            {currentStudent.number}번 {currentStudent.name}
-          </span>
-
-          <h1 className="text-base sm:text-lg font-bold text-[#1E293B] truncate font-editorial-serif">
-            {selectedTopic.title}
-          </h1>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2.5">
-          {isTeacherPreview && (
-            <span className="px-3 py-1.5 rounded-xl bg-[#FEF3C7] border border-[#F59E0B] text-xs font-bold text-[#92400E] flex items-center gap-1.5">
-              <BookOpen className="w-3.5 h-3.5" />
-              교사 읽기 전용
+          <h1 className="text-base font-semibold text-[#334155]">{selectedTopic.title}</h1>
+          <span className="text-xs text-[#64748B]">{currentStudent.number}번 {currentStudent.name}</span>
+          {isFinalCompleted && (
+            <span role="status" className="inline-flex items-center gap-1.5 text-sm font-medium text-[#2D6A4F]">
+              <Check className="w-4 h-4" aria-hidden="true" />
+              {isEditingCompleted ? '완성본 다듬는 중' : '최종 완성'}
             </span>
           )}
-          {!isTeacherPreview && <button type="button" disabled={isSubmitting} onClick={() => { draft.flush('recovery-open'); setRecoveryData(draft.recovery()); }} className="sketch-btn-secondary min-h-11 px-3 py-2 text-xs sm:text-sm font-bold flex items-center gap-2"><History className="h-4 w-4" aria-hidden="true" />이전 글 복구</button>}
+          {isTeacherPreview && <span className="text-xs text-[#64748B]">교사 읽기 전용</span>}
+        </div>
+
+        <div className="student-toolbar-actions">
+          <details ref={toolsRef} className="student-tools">
+            <summary className="student-text-button">
+              <MoreHorizontal className="w-4 h-4" aria-hidden="true" />글 도구
+            </summary>
+            <div className="student-tools-menu">
+              <button type="button" disabled={!hasRevision} onClick={() => runTool(() => setIsDiffModalOpen(true))}>
+                <HandDrawnDiffIcon size={16} color="#64748B" />처음 글과 비교하기
+              </button>
+              {prevComparisonText && prevComparisonText.trim() !== activeDisplayText.trim() && (
+                <button type="button" aria-pressed={showGreenText} onClick={() => runTool(() => {
+                  setHighlightedQuote('');
+                  setShowGreenText((prev) => !prev);
+                })}>
+                  <Check className={'w-4 h-4 ' + (showGreenText ? '' : 'opacity-0')} aria-hidden="true" />
+                  고친 표현 초록 글씨로 보기
+                </button>
+              )}
+              {!isTeacherPreview && (
+                <button type="button" disabled={isSubmitting} onClick={() => runTool(() => {
+                  draft.flush('recovery-open');
+                  setRecoveryData(draft.recovery());
+                })}>
+                  <History className="w-4 h-4" aria-hidden="true" />이전 글 복구
+                </button>
+              )}
+              {!isReadOnly && !isViewingText && (
+                <button type="button" onClick={() => runTool(handleInsertParagraph)}>
+                  <CornerDownLeft className="w-4 h-4" aria-hidden="true" />새 문단 나누기
+                </button>
+              )}
+            </div>
+          </details>
+          {!isTeacherPreview && (
+            <button type="button" onClick={openQuestion} className="student-text-button">선생님께 질문</button>
+          )}
           <button
+            ref={feedbackToggleRef}
             type="button"
-            onClick={() => setIsDiffModalOpen(true)}
-            className="sketch-btn-secondary px-4 py-2 text-xs sm:text-sm font-bold flex items-center gap-2"
+            aria-expanded={isFeedbackOpen}
+            aria-controls="student-feedback-panel"
+            onClick={() => isFeedbackOpen ? closeFeedback() : setFeedbackOpen(true)}
+            className="student-action-button"
           >
-            <HandDrawnDiffIcon size={16} color="#1B4332" />
-            <span>처음 쓴 글 · 고쳐 쓴 글 크게 비교하기</span>
-            {hasRevision && (
-              <span className="px-2 py-0.5 rounded-full bg-[#D8F3DC] text-[#1B4332] text-[11px] font-bold">
-                총 {draftPages.length}차 작성
-              </span>
-            )}
+            {isFeedbackOpen
+              ? <PanelRightClose className="w-4 h-4" aria-hidden="true" />
+              : <PanelRightOpen className="w-4 h-4" aria-hidden="true" />}
+            {isFeedbackOpen ? '첨삭 닫기' : '첨삭 보기'}
           </button>
         </div>
-      </div>
+      </header>
 
-      {draft.error && !isTeacherPreview && <div role="alert" className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-4 text-sm text-[#991B1B] space-y-3"><p className="font-bold">{draft.error}</p><div className="flex flex-wrap gap-2"><button type="button" onClick={copyCurrentDraft} className="sketch-btn-secondary min-h-11 px-3 py-2 font-bold flex items-center gap-2"><Copy className="h-4 w-4" aria-hidden="true" />지금 글 복사</button><button type="button" onClick={downloadCurrentDraft} className="sketch-btn-secondary min-h-11 px-3 py-2 font-bold flex items-center gap-2"><Download className="h-4 w-4" aria-hidden="true" />글 파일로 보관</button><button type="button" onClick={draft.retry} className="min-h-11 px-3 py-2 font-bold underline cursor-pointer">저장 다시 시도</button></div></div>}
+      {draft.error && !isTeacherPreview && (
+        <div role="alert" className="rounded-xl border border-[#FCA5A5] bg-[#FEF2F2] p-4 text-sm text-[#991B1B] space-y-3">
+          <p className="font-semibold">{draft.error}</p>
+          <div className="flex flex-wrap gap-2">
+            <button type="button" onClick={copyCurrentDraft} className="student-action-button"><Copy className="w-4 h-4" aria-hidden="true" />지금 글 복사</button>
+            <button type="button" onClick={downloadCurrentDraft} className="student-action-button"><Download className="w-4 h-4" aria-hidden="true" />글 파일로 보관</button>
+            <button type="button" onClick={draft.retry} className="student-text-button">저장 다시 시도</button>
+          </div>
+        </div>
+      )}
 
-      {/* 넓어진 공통 원고 + 읽기 편한 폭으로 제한된 피드백 */}
-      <div className="student-notebook-layout flex-1">
-        <div className="notebook-card sketch-card bg-white flex flex-col justify-between">
-          <div className="flex-1 flex flex-col">
-            <div className="flex items-center justify-between gap-2 pb-3 mb-3 border-b border-[#E2E8F0] flex-wrap">
-              {/* 왼쪽: 내가 쓰는 글 + 문단·글자수 + [고친 표현 초록 글씨로 보기] 버튼 */}
-              <div className="flex items-center gap-2 flex-wrap">
-                <HandDrawnPencilIcon size={20} color="#1B4332" />
-                <h2 className="text-lg font-bold text-[#1B4332]">내가 쓰는 글</h2>
-                <span className="px-2.5 py-0.5 rounded-full bg-[#F8FAFC] border border-[#CBD5E1] text-xs font-bold text-[#475569]">
-                  {paragraphCount}개 문단 · {activeDisplayText.trim().length}자
-                </span>
-
-                {lastSavedTime && !isReadOnly && viewingPageIdx === null && (
-                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#F0FDF4] border border-[#BBF7D0] text-xs font-bold text-[#166534]">
-                    <span className="w-1.5 h-1.5 rounded-full bg-[#22C55E] animate-pulse"></span>
-                    기기에 저장됨 ({lastSavedTime})
-                  </span>
-                )}
-
-                {prevComparisonText && prevComparisonText.trim() !== activeDisplayText.trim() && (
-                  <button
-                    type="button"
-                    onClick={() => setShowGreenText((prev) => !prev)}
-                    className={`px-3 py-1 rounded-xl text-xs font-bold border transition cursor-pointer ${
-                      showGreenText
-                        ? 'bg-[#15803D] text-white border-[#15803D]'
-                        : 'bg-white text-[#15803D] border-[#86EFAC] hover:border-[#15803D]'
-                    }`}
-                  >
-                    {showGreenText ? '초록 글씨 표시: 켜짐' : '고친 표현 초록 글씨로 보기'}
-                  </button>
-                )}
-              </div>
-
-              {/* 오른쪽: [1차 글 | 2차 글 | 3차 글...] 페이지 넘김 탭 (흐름이 끊기지 않게 한 덩어리로 배치) */}
-              <div className="flex items-center gap-2 flex-wrap">
-                {draftPages.length > 0 && (
-                  <div className="inline-flex items-center gap-1 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl p-1">
-                    {draftPages.map((pg, idx) => (
-                      <button
-                        key={pg.round}
-                        type="button"
-                        onClick={() => setViewingPageIdx(idx)}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                          viewingPageIdx === idx
-                            ? 'bg-[#1B4332] text-white'
-                            : 'text-[#475569] hover:text-[#1B4332]'
-                        }`}
-                      >
-                        {pg.label}
-                        {idx === draftPages.length - 1
-                          ? isFinalCompleted
-                            ? ' · 최종 완성본'
-                            : ' · 최신 수정본'
-                          : ''}
-                      </button>
-                    ))}
-                    {!isReadOnly && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setViewingPageIdx(null);
-                          setShowGreenText(false);
-                        }}
-                        className={`px-2.5 py-1 rounded-lg text-xs font-bold transition cursor-pointer ${
-                          viewingPageIdx === null
-                            ? 'bg-[#1B4332] text-white'
-                            : 'text-[#1B4332] hover:bg-[#D8F3DC]'
-                        }`}
-                      >
-                        고쳐 쓰기 공책
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {highlightedQuote ? (
-                  <button
-                    type="button"
-                    onClick={() => setHighlightedQuote('')}
-                    className="sketch-btn-primary px-3.5 py-1.5 text-xs font-bold flex items-center gap-1.5"
-                  >
-                    <HandDrawnPencilIcon size={14} color="#FFFFFF" />
-                    <span>형광펜 끄고 계속 고쳐 쓰기</span>
-                  </button>
-                ) : (
-                  !isReadOnly &&
-                  viewingPageIdx === null &&
-                  !showGreenText && (
-                    <button
-                      type="button"
-                      onClick={handleInsertParagraph}
-                      className="px-3 py-1.5 rounded-xl bg-[#F2F9F5] border border-[#52B788] text-xs font-bold text-[#1B4332] hover:bg-[#D8F3DC] flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <CornerDownLeft className="w-3.5 h-3.5" />
-                      <span>새 문단 나누기 (들여쓰기)</span>
-                    </button>
-                  )
-                )}
-              </div>
+      <div className={'student-notebook-layout flex-1 ' + (isFeedbackOpen ? '' : 'is-feedback-closed')}>
+        <section aria-label="내 글 공책" className="notebook-card sketch-card bg-white flex flex-col">
+          <div className="student-paper-toolbar">
+            <div className="flex items-center gap-3 flex-wrap">
+              <h2 className="text-sm font-semibold text-[#475569]">{viewingPageIdx === null ? '내 글' : draftPages[viewingPageIdx]?.label}</h2>
+              <span className="text-xs text-[#64748B]">{paragraphCount}개 문단 · {activeDisplayText.trim().length}자</span>
             </div>
-
-            {restoredBannerMsg && (
-              <div className="mb-3 px-4 py-2.5 rounded-xl bg-[#ECFDF5] border border-[#6EE7B7] text-xs font-bold text-[#065F46] flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-[#059669] shrink-0" />
-                  <span>{restoredBannerMsg}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={draft.dismissNotice}
-                  className="text-[#065F46] hover:text-[#047857] text-xs underline cursor-pointer shrink-0"
-                >
-                  확인
-                </button>
-              </div>
-            )}
-
-            {isFinalCompleted && (
-              <div className="mb-3.5 p-4 sm:p-5 rounded-2xl bg-gradient-to-r from-[#D8F3DC] via-[#E8F5E9] to-[#D8F3DC] border-2 border-[#52B788] shadow-2xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3.5">
-                <div className="flex items-start sm:items-center gap-3.5">
-                  <div className="w-11 h-11 rounded-2xl bg-[#1B4332] text-white flex items-center justify-center shrink-0 shadow-sm text-2xl">
-                    🎉
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="px-2.5 py-0.5 rounded-full bg-[#1B4332] text-white text-xs font-bold">
-                        글쓰기 최종 완성
-                      </span>
-                      <h3 className="text-base sm:text-lg font-bold text-[#1B4332]">
-                        선생님이 글을 최종 확인했어요! 글 쓰느라 정말 수고 많았어요 👏
-                      </h3>
-                    </div>
-                    <p className="text-xs sm:text-sm text-[#2D6A4F] mt-1 leading-relaxed font-medium">
-                      처음 생각부터 고쳐 쓰기까지 정성을 다해 나만의 멋진 글을 완성했어요. 스스로를 많이 칭찬해 주세요!
-                    </p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2 shrink-0 self-end sm:self-center">
-                  <button
-                    type="button"
-                    onClick={() => setIsDiffModalOpen(true)}
-                    className="sketch-btn-primary px-3.5 py-2 text-xs font-bold flex items-center gap-1.5"
-                  >
-                    <HandDrawnDiffIcon size={15} color="#FFFFFF" />
-                    <span>처음 글과 비교하기</span>
-                  </button>
-                  {!isTeacherPreview && !isEditingCompleted && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsEditingCompleted(true);
-                        setViewingPageIdx(null);
-                        setTimeout(() => textareaRef.current?.focus(), 50);
-                      }}
-                      className="sketch-btn-secondary px-3.5 py-2 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
-                    >
-                      <HandDrawnPencilIcon size={14} color="#1B4332" />
-                      <span>글 더 다듬기</span>
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {isEditingCompleted && (
-              <div className="mb-3 px-4 py-3 rounded-2xl bg-[#FEF9C3] border border-[#FACC15] text-xs sm:text-sm font-bold text-[#854D0E] flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <HandDrawnPencilIcon size={16} color="#854D0E" />
-                  <span>완성본을 자유롭게 더 다듬고 있어요. 저장만 하면 선생님께 첨삭을 요청하지 않아요.</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setIsEditingCompleted(false)}
-                  className="text-xs text-[#854D0E] underline hover:text-[#713F12] cursor-pointer shrink-0"
-                >
-                  수정 취소하고 완성본 보기
-                </button>
-              </div>
-            )}
-
-            {isRecalled && (
-              <div className="mb-3 px-4 py-3 rounded-2xl bg-[#E0F2FE] border border-[#7DD3FC] text-xs sm:text-sm font-bold text-[#0369A1] flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-2">
-                  <CornerDownLeft className="w-4 h-4 text-[#0284C7]" />
-                  <span>제출을 회수하여 수정 모드로 돌아왔어요. 오타나 생각을 고친 뒤 아래 [수정 완료! 다시 제출하기]를 눌러주세요.</span>
-                </div>
-              </div>
-            )}
-
-            <div className="text-xs sm:text-sm text-[#2D6A4F] mb-3 bg-[#F2F9F5] px-4 py-2.5 rounded-xl border border-[#B7E4C7] font-medium">
-              안내: {selectedTopic.prompt}
-            </div>
-
-            <div
-              className={`manuscript-paper flex-1 lined-paper rounded-2xl border text-[#1E293B] ${
-                highlightedQuote || showGreenText || viewingPageIdx !== null
-                  ? 'border-[#52B788] ring-1 ring-[#52B788]'
-                  : 'border-[#CBD5E1] focus-within:border-[#1B4332]'
-              }`}
-            >
-              {!isReadOnly && viewingPageIdx === null && !highlightedQuote && !showGreenText ? (
-                <input
-                  type="text"
-                  value={pieceTitle}
-                  onChange={(e) => setPieceTitle(e.target.value)}
-                  maxLength={50}
-                  aria-label="작품 제목"
-                  disabled={isSubmitting}
-                  placeholder="제목을 써주세요"
-                  className="manuscript-title bg-transparent border-0 border-b border-dashed border-[#94A3B8] text-[#1E293B] placeholder:text-[#94A3B8]/70 placeholder:font-normal focus:outline-none focus:border-[#1B4332]"
-                />
-              ) : (
-                <h3
-                  className={`manuscript-title ${
-                    displayPieceTitle
-                      ? 'font-bold text-[#1E293B]'
-                      : 'font-normal text-[#94A3B8]/70'
-                  }`}
-                >
-                  {displayPieceTitle || '제목을 써주세요'}
-                </h3>
+            <div className="flex items-center gap-3 flex-wrap">
+              {lastSavedTime && !isReadOnly && viewingPageIdx === null && (
+                <span className="text-xs text-[#64748B]" title={'마지막 저장: ' + lastSavedTime}>기기에 저장됨</span>
               )}
-              <div className="manuscript-name text-[#475569]">
-                {currentStudent.name}
-              </div>
-
-              {highlightedQuote || showGreenText || viewingPageIdx !== null ? (
-                <div
-                  onClick={() => {
-                    if (!isReadOnly) {
+              {draftPages.length > 0 && (
+                <label className="flex items-center gap-2 text-xs text-[#64748B]">
+                  이전 글
+                  <select
+                    aria-label="이전 글 보기"
+                    className="student-select"
+                    value={viewingPageIdx === null ? 'current' : String(viewingPageIdx)}
+                    onChange={(event) => {
                       setHighlightedQuote('');
                       setShowGreenText(false);
-                      setViewingPageIdx(null);
-                    }
-                  }}
-                  className="cursor-text"
-                >
-                  <div className="mb-3 flex items-center justify-between bg-[#F2F9F5] border border-[#B7E4C7] px-3.5 py-2 rounded-xl text-xs font-bold text-[#1B4332]">
-                    <span>
-                      {highlightedQuote
-                        ? '선생님이 첨삭해 주신 문장에 노란 형광펜이 켜졌어요!'
-                        : showGreenText
-                        ? '고치며 새로 추가한 표현이 초록색 글씨로 표시되었어요!'
-                        : `${draftPages[viewingPageIdx]?.label || '이전 차수'}을 보고 있어요.`}
-                      {!isReadOnly ? ' (공책을 클릭하면 바로 이어서 고쳐 쓸 수 있어요)' : ''}
-                    </span>
-                  </div>
-                  <div className="manuscript-body">
-                    {showGreenText
-                      ? renderTextWithGreenAdditions(
-                          prevComparisonText,
-                          activeDisplayText,
-                          highlightedQuote
-                        )
-                      : renderTextWithHighlight(activeDisplayText, highlightedQuote)}
-                  </div>
-                </div>
-              ) : (
-                <textarea
-                  ref={textareaRef}
-                  value={editorText}
-                  onChange={(e) => setEditorText(e.target.value)}
-                  disabled={isReadOnly || isSubmitting}
-                  placeholder="여기에 글을 시작해 주세요."
-                  className="manuscript-body bg-transparent focus:outline-none text-[#1E293B] disabled:opacity-100 disabled:cursor-not-allowed"
-                />
+                      setViewingPageIdx(event.target.value === 'current' ? null : Number(event.target.value));
+                    }}
+                  >
+                    <option value="current">{isReadOnly ? '현재 글' : '쓰고 있는 글'}</option>
+                    {draftPages.map((page, idx) => <option key={page.round} value={String(idx)}>{page.label}</option>)}
+                  </select>
+                </label>
               )}
             </div>
           </div>
 
-          <div className="mt-5 pt-4 border-t border-[#E2E8F0] flex items-center justify-between gap-4 flex-wrap">
-            <span className="text-xs text-[#64748B]">
-              * 오른쪽의 첨삭 메모를 클릭하면 내 글의 어느 문장인지 노란 형광펜으로 보여줍니다.
-            </span>
+          {selectedTopic.prompt && (
+            <details className="student-writing-guide">
+              <summary>글쓰기 안내</summary>
+              <p className="mt-2 whitespace-pre-wrap leading-relaxed">{selectedTopic.prompt}</p>
+            </details>
+          )}
+          {restoredBannerMsg && (
+            <div className="student-inline-notice">
+              <span>{restoredBannerMsg}</span>
+              <button type="button" onClick={draft.dismissNotice} className="student-text-button shrink-0">확인</button>
+            </div>
+          )}
+          {isEditingCompleted && (
+            <div className="student-inline-notice">
+              <span>저장만 하면 선생님께 첨삭을 요청하지 않아요.</span>
+              <button type="button" onClick={() => setIsEditingCompleted(false)} className="student-text-button shrink-0">수정 취소</button>
+            </div>
+          )}
+          {isRecalled && <p className="mb-3 text-xs leading-relaxed text-[#64748B]">제출을 회수했어요. 글을 고친 뒤 다시 제출해 주세요.</p>}
+          {isViewingText && (
+            <div className="student-view-hint">
+              <span>{highlightedQuote ? '첨삭받은 문장에 형광펜을 켰어요.' : showGreenText ? '고친 표현을 초록 글씨로 보고 있어요.' : '이전에 제출한 글을 보고 있어요.'}</span>
+              <button type="button" className="student-text-button shrink-0" onClick={resumeWriting}>{isReadOnly ? '현재 글 보기' : '이어서 쓰기'}</button>
+            </div>
+          )}
 
+          <div className="manuscript-paper lined-paper rounded-2xl border border-[#CBD5E1] text-[#1E293B]">
+            {!isReadOnly && !isViewingText ? (
+              <input
+                type="text"
+                value={pieceTitle}
+                onChange={(event) => setPieceTitle(event.target.value)}
+                maxLength={50}
+                aria-label="작품 제목"
+                disabled={isSubmitting}
+                placeholder="제목을 써주세요"
+                className="manuscript-title bg-transparent border-0 border-b border-dashed border-[#CBD5E1] text-[#1E293B] placeholder:text-[#94A3B8]/70 placeholder:font-normal focus:outline-none focus:border-[#64748B]"
+              />
+            ) : (
+              <h3 className={'manuscript-title ' + (visibleTitle ? 'text-[#1E293B]' : 'text-[#94A3B8]')}>{visibleTitle || '제목을 써주세요'}</h3>
+            )}
+            <div className="manuscript-name text-[#475569]">{currentStudent.name}</div>
+            {isViewingText ? (
+              <div className="manuscript-body">
+                {showGreenText
+                  ? renderTextWithGreenAdditions(prevComparisonText, activeDisplayText, highlightedQuote)
+                  : renderTextWithHighlight(activeDisplayText, highlightedQuote)}
+              </div>
+            ) : (
+              <textarea
+                ref={textareaRef}
+                value={editorText}
+                onChange={(event) => setEditorText(event.target.value)}
+                disabled={isReadOnly || isSubmitting}
+                aria-label="글 본문"
+                placeholder="여기에 글을 시작해 주세요."
+                className="manuscript-body bg-transparent focus:outline-none text-[#1E293B] disabled:opacity-100 disabled:cursor-not-allowed"
+              />
+            )}
+          </div>
+
+          <footer className="student-paper-footer">
             {isTeacherPreview ? (
-              <div className="py-3.5 px-6 rounded-xl bg-[#FEF3C7] border border-[#F59E0B] text-sm font-bold text-[#92400E] flex items-center gap-2">
-                <BookOpen className="w-4 h-4" />
-                <span>교사 미리보기에서는 학생 공책을 읽기만 할 수 있습니다</span>
-              </div>
+              <p className="flex items-center gap-2 text-xs text-[#64748B]"><BookOpen className="w-4 h-4" aria-hidden="true" />교사 미리보기에서는 읽기만 할 수 있어요.</p>
             ) : isFinalCompleted && !isEditingCompleted ? (
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="py-3.5 px-6 rounded-2xl bg-[#D8F3DC] border-2 border-[#1B4332] text-sm font-bold text-[#1B4332] flex items-center justify-center sm:justify-start gap-3 shadow-2xs">
-                  <span className="text-2xl">🏅</span>
-                  <div>
-                    <div className="text-xs text-[#2D6A4F] font-semibold">글쓰기 여정 완료</div>
-                    <div>선생님이 최종 완성본으로 확인했어요! 글 쓰느라 정말 수고 많았어요 👏</div>
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsEditingCompleted(true);
-                    setViewingPageIdx(null);
-                    setTimeout(() => textareaRef.current?.focus(), 50);
-                  }}
-                  className="sketch-btn-secondary px-5 py-3.5 text-sm font-bold flex items-center gap-2 cursor-pointer hover:bg-[#D8F3DC]"
-                >
-                  <HandDrawnPencilIcon size={16} color="#1B4332" />
-                  <span>이어서 더 고쳐 쓰기</span>
-                </button>
-              </div>
+              <button type="button" onClick={startCompletedRevision} className="student-action-button">
+                <HandDrawnPencilIcon size={16} color="#475569" />더 다듬기
+              </button>
             ) : isTeacherLocked ? (
-              <div className="flex items-center gap-3 flex-wrap">
-                <div className="py-3.5 px-5 rounded-2xl bg-[#F2F9F5] border border-[#52B788] text-sm font-bold text-[#1B4332] flex items-center gap-2">
-                  <HandDrawnCheckIcon size={18} color="#1B4332" />
-                  <span>
-                    {topicStudentData?.status === 'STAGE_1_SUBMITTED'
-                      ? '1차 글을 제출했어요. 선생님의 확인을 기다리고 있어요.'
-                      : '최신 수정본을 제출했어요. 선생님의 확인을 기다리고 있어요.'}
-                  </span>
-                </div>
+              <div className="flex items-center justify-between gap-3 flex-wrap w-full">
+                <p className="flex items-center gap-2 text-sm text-[#64748B]"><Check className="w-4 h-4" aria-hidden="true" />제출했어요. 선생님의 확인을 기다리고 있어요.</p>
                 {!isClassLocked && (
-                  <button
-                    type="button"
-                    onClick={handleUnsubmitStage}
-                    disabled={isUnsubmitting}
-                    className="sketch-btn-secondary px-4 py-3.5 text-sm font-bold flex items-center gap-1.5 cursor-pointer hover:bg-[#FEF2F2] hover:border-[#EF4444] hover:text-[#B91C1C] transition"
-                  >
-                    <CornerDownLeft className="w-4 h-4" />
-                    <span>{isUnsubmitting ? '회수하는 중...' : '제출 회수하고 더 고쳐 쓰기'}</span>
+                  <button type="button" onClick={handleUnsubmitStage} disabled={isUnsubmitting} className="student-text-button">
+                    <CornerDownLeft className="w-4 h-4" aria-hidden="true" />{isUnsubmitting ? '회수하는 중...' : '회수하고 고쳐 쓰기'}
                   </button>
                 )}
               </div>
             ) : isEditingCompleted ? (
-              <div className="w-full sm:w-auto flex flex-col sm:flex-row gap-2">
-                <button
-                  type="button"
-                  onClick={() => handleStageSubmit(false)}
-                  disabled={isSubmitting}
-                  className="w-full sm:w-auto min-w-[240px] h-14 px-7 sketch-btn-primary text-base font-bold flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <HandDrawnCheckIcon size={20} color="#FFFFFF" />
-                  <span>{isSubmitting ? '안전하게 저장하고 있어요...' : '수정한 내용 저장하기'}</span>
+              <div className="flex items-center gap-3 flex-wrap">
+                <button type="button" onClick={() => handleStageSubmit(false)} disabled={isSubmitting} className="student-primary-button">
+                  {isSubmitting ? '저장하고 있어요...' : '수정한 내용 저장하기'}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => handleStageSubmit(true)}
-                  disabled={isSubmitting}
-                  className="w-full sm:w-auto min-w-[220px] h-14 px-6 sketch-btn-secondary text-base font-bold flex items-center justify-center gap-2 cursor-pointer"
-                >
-                  <HandDrawnPencilIcon size={18} color="#1B4332" />
-                  <span>{isSubmitting ? '처리하고 있어요...' : '선생님에게 첨삭 요청'}</span>
+                <button type="button" onClick={() => handleStageSubmit(true)} disabled={isSubmitting} className="student-text-button">
+                  선생님에게 첨삭 요청
                 </button>
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={() => handleStageSubmit(false)}
-                disabled={isSubmitting}
-                className="w-full sm:w-auto min-w-[260px] h-14 px-8 sketch-btn-primary text-base font-bold flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <HandDrawnCheckIcon size={20} color="#FFFFFF" />
-                <span>
-                  {isSubmitting
-                    ? '안전하게 제출하고 있어요...'
-                    : isRecalled
-                    ? '수정 완료! 다시 제출하기'
-                    : currentWritingStage === 1
-                    ? '다 썼어요! 선생님께 제출하기'
-                    : `${currentWritingStage}차 수정 완료! 다시 제출하기`}
-                </span>
+              <button type="button" onClick={() => handleStageSubmit(false)} disabled={isSubmitting} className="student-primary-button">
+                {isSubmitting ? '제출하고 있어요...' : isRecalled ? '수정한 글 다시 제출하기' : '선생님께 제출하기'}
               </button>
             )}
-          </div>
-        </div>
+          </footer>
+        </section>
 
-        {/* 선생님의 다정한 첨삭 & 클릭 시 본문 형광펜 연동 */}
-        <div className="sketch-card bg-[#FBFBF9] p-6 sm:p-7 flex flex-col justify-between gap-6">
-          <div className="space-y-4">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#CBD5E1]">
-              <div className="flex items-center gap-2">
-                <HandDrawnSparkleIcon size={20} color="#1B4332" />
-                <h2 className="text-lg font-bold text-[#1B4332] whitespace-nowrap">
-                  선생님의 다정한 첨삭
-                </h2>
-              </div>
-              {feedbackItems.length > 0 && (
-                <span className="text-xs font-semibold text-[#2D6A4F]">
-                  메모를 누르면 형광펜이 켜져요
-                </span>
-              )}
+        <aside id="student-feedback-panel" aria-label="선생님 첨삭" hidden={!isFeedbackOpen} className="student-feedback-panel sketch-card bg-white p-6 sm:p-7 space-y-6">
+          <header className="flex items-center justify-between gap-3">
+            <h2 className="flex items-center gap-2 text-base font-semibold text-[#334155]"><MessageSquare className="w-4 h-4" aria-hidden="true" />선생님 첨삭</h2>
+            <button type="button" onClick={closeFeedback} className="student-text-button" aria-label="첨삭 패널 닫기"><X className="w-4 h-4" aria-hidden="true" /></button>
+          </header>
+
+          {feedbackPages.length > 1 ? (
+            <label className="flex items-center gap-3 text-sm text-[#64748B]">
+              지난 피드백
+              <select aria-label="지난 피드백 보기" className="student-select" value={String(activeFeedbackPage.round)} onChange={(event) => {
+                setSelectedFeedbackRound(Number(event.target.value));
+                setHighlightedQuote('');
+              }}>
+                {feedbackPages.map((page, idx) => <option key={page.round} value={String(page.round)}>{page.round}차 피드백{idx === feedbackPages.length - 1 ? ' · 최근' : ''}</option>)}
+              </select>
+            </label>
+          ) : activeFeedbackPage && <p className="text-xs text-[#64748B]">{activeFeedbackPage.round}차 글에 받은 피드백</p>}
+
+          {!activeFeedbackPage ? (
+            <div className="py-6 space-y-2">
+              <p className="text-sm font-medium text-[#475569]">아직 받은 첨삭이 없어요.</p>
+              <p className="text-sm leading-relaxed text-[#64748B]">선생님이 보내 주신 조언은 여기에 모아 둘게요.</p>
             </div>
-
-            {feedbackPages.length > 0 && (
-              <div className="p-3 rounded-2xl bg-[#F2F9F5] border border-[#B7E4C7] space-y-2">
-                <div className="text-xs font-bold text-[#2D6A4F]">지난 피드백 보기</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {feedbackPages.map((page, idx) => {
-                    const isActive = page.round === activeFeedbackPage?.round;
+          ) : (
+            <div className="space-y-6">
+              {feedbackTeacherNote && <div className="student-feedback-note whitespace-pre-wrap text-sm sm:text-[15px] text-[#334155] leading-7">{feedbackTeacherNote}</div>}
+              {feedbackItems.length > 0 && (
+                <div className="space-y-3">
+                  <h3 className="text-xs font-medium text-[#64748B]">문장별 조언 · 누르면 글에서 확인할 수 있어요</h3>
+                  {feedbackItems.map((item, idx) => {
+                    const isHighlighted = Boolean(highlightedQuote && highlightedQuote === item.quote);
                     return (
-                      <button
-                        key={`feedback-${page.round}`}
-                        type="button"
-                        onClick={() => {
-                          setSelectedFeedbackRound(page.round);
-                          setHighlightedQuote('');
-                        }}
-                        className={`px-3 py-1.5 rounded-xl border text-xs font-bold transition cursor-pointer ${
-                          isActive
-                            ? 'bg-[#1B4332] border-[#1B4332] text-white'
-                            : 'bg-white border-[#86EFAC] text-[#1B4332] hover:bg-[#D8F3DC]'
-                        }`}
-                      >
-                        {page.round}차 피드백
-                        {idx === feedbackPages.length - 1 ? ' · 최근' : ''}
+                      <button key={item.id || idx} type="button" aria-pressed={isHighlighted} onClick={() => {
+                        if (!item.quote) return;
+                        setHighlightedQuote(isHighlighted ? '' : item.quote);
+                      }} className={'student-feedback-item ' + (isHighlighted ? 'is-selected' : '')}>
+                        <span className="text-xs text-[#64748B]">문장 조언 {idx + 1}</span>
+                        {item.quote && <blockquote className="text-sm text-[#475569] leading-relaxed">{item.quote}</blockquote>}
+                        <span className="block text-sm text-[#334155] leading-relaxed whitespace-pre-wrap">{item.comment}</span>
                       </button>
                     );
                   })}
                 </div>
-              </div>
-            )}
-
-            {isFinalCompleted && (
-              <div className="p-4 rounded-2xl bg-[#D8F3DC] border-2 border-[#52B788] text-[#1B4332] flex items-center gap-3">
-                <span className="text-2xl shrink-0">🏆</span>
-                <div>
-                  <div className="text-xs font-bold text-[#2D6A4F]">최종 완료 도장 쾅!</div>
-                  <div className="text-sm font-bold">
-                    선생님이 최종 확인을 마쳤어요. 멋진 글을 짓느라 애썼어요!
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {!activeFeedbackPage ? (
-              isFinalCompleted ? (
-                <div className="py-12 px-6 text-center rounded-2xl bg-white border border-[#CBD5E1] space-y-2">
-                  <p className="text-base font-bold text-[#1B4332]">
-                    훌륭하게 글쓰기를 마쳤어요!
-                  </p>
-                  <p className="text-sm text-[#475569] leading-relaxed">
-                    선생님이 최종 완성본으로 인정해 주셨어요.<br />
-                    내가 쓴 글을 다시 읽어보거나, 위의 [처음 글과 비교하기]를 눌러보세요.
-                  </p>
-                </div>
-              ) : (
-                <div className="py-16 px-6 text-center rounded-2xl bg-white border border-[#E2E8F0] space-y-2">
-                  <p className="text-base font-bold text-[#475569]">
-                    아직 도착한 첨삭이 없어요
-                  </p>
-                  <p className="text-sm text-[#64748B] leading-relaxed">
-                    왼쪽 공책에 글을 쓰고 [제출하기]를 누르면, 선생님이 내 글을 읽고 여기에 다정한 조언을 적어 주실 거예요!
-                  </p>
-                </div>
-              )
-            ) : (
-              <div className="space-y-4">
-                {feedbackTeacherNote && (
-                  <div className="p-5 rounded-2xl bg-white border-2 border-[#1B4332] text-sm sm:text-[15px] text-[#1E293B] leading-relaxed whitespace-pre-wrap shadow-2xs">
-                    <div className="font-bold text-[#1B4332] pb-2 mb-2.5 border-b border-[#D8F3DC] flex items-center gap-1.5">
-                      <HandDrawnSparkleIcon size={16} color="#1B4332" />
-                      <span>선생님의 종합 첨삭 노트</span>
-                    </div>
-                    {feedbackTeacherNote}
-                  </div>
-                )}
-
-                {feedbackItems.length > 0 && (
-                  <div className="space-y-2.5">
-                    <div className="text-xs font-bold text-[#2D6A4F] px-1">
-                      문장별 부분 첨삭 (클릭하면 내 글에서 노란 형광펜으로 보여요)
-                    </div>
-                    {feedbackItems.map((item, idx) => {
-                      const isHighlighted =
-                        highlightedQuote && highlightedQuote === item.quote;
-
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          onClick={() => {
-                            if (!item.quote) return;
-                            setHighlightedQuote(isHighlighted ? '' : item.quote);
-                          }}
-                          className={`w-full text-left p-4 rounded-2xl bg-white border transition space-y-2 cursor-pointer ${
-                            isHighlighted
-                              ? 'border-2 border-[#F59E0B] shadow-sm'
-                              : 'border-[#CBD5E1] hover:border-[#1B4332] shadow-2xs'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between text-xs font-bold text-[#2D6A4F]">
-                            <span>부분 첨삭 {idx + 1}</span>
-                            {item.quote && (
-                              <span className="px-2 py-0.5 rounded-full bg-[#FEF3C7] text-[#92400E] text-[11px]">
-                                {isHighlighted ? '형광펜 켜짐' : '클릭해서 위치 보기'}
-                              </span>
-                            )}
-                          </div>
-
-                          {item.quote && (
-                            <div className="inline-block text-xs sm:text-sm font-bold text-[#92400E] bg-[#FEF08A]/85 px-3 py-1 rounded-xl font-editorial-serif">
-                              "{item.quote}"
-                            </div>
-                          )}
-                          <p className="text-sm text-[#1E293B] bg-white leading-relaxed font-medium pl-1">
-                            → {item.comment}
-                          </p>
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* 하단 고정: 선생님께 궁금한 점 물어보기 */}
-          <div className="pt-4 border-t border-[#CBD5E1] space-y-3">
-            <div className="flex items-center gap-1.5 text-sm font-bold text-[#1B4332]">
-              <HandDrawnChatIcon size={16} color="#1B4332" />
-              <span>선생님께 궁금한 점 물어보기</span>
+              )}
             </div>
+          )}
 
-            {myQuestions.length > 0 && (
-              <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-                {myQuestions.map((q) => (
-                  <div
-                    key={q.id}
-                    className="p-3 rounded-xl bg-white border border-[#E2E8F0] text-xs sm:text-sm space-y-1.5"
-                  >
-                    <div className="font-semibold text-[#1E293B]">나: {q.question}</div>
-                    {q.reply ? (
-                      <div className="text-[#1B4332] font-bold bg-[#F2F9F5] px-2.5 py-1.5 rounded-lg">
-                        선생님: {q.reply}
-                      </div>
-                    ) : (
-                      <div className="text-xs text-[#94A3B8]">선생님 답변 기다리는 중...</div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {!isTeacherPreview && (
-              <form onSubmit={handleQuestionSubmit} className="flex gap-2">
-                <input
-                  type="text"
-                  value={questionInput}
-                  onChange={(e) => setQuestionInput(e.target.value)}
-                  placeholder="궁금한 점을 적어 보세요"
-                  className="flex-1 px-3.5 py-2.5 rounded-xl border border-[#CBD5E1] bg-white text-sm focus:outline-none focus:border-[#1B4332]"
-                />
-                <button
-                  type="submit"
-                  disabled={isQuestionSubmitting}
-                  className="sketch-btn-secondary px-4 py-2.5 text-sm font-bold flex items-center gap-1.5 shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
-                >
-                  <Send className="w-4 h-4" />
-                  <span>{isQuestionSubmitting ? '보내는 중' : '질문'}</span>
-                </button>
-              </form>
-            )}
-          </div>
-        </div>
+          <details className="student-questions" open={isQuestionOpen} onToggle={(event) => setIsQuestionOpen(event.currentTarget.open)}>
+            <summary className="text-sm font-medium text-[#475569]">선생님께 질문{myQuestions.length > 0 ? ' · ' + myQuestions.length : ''}</summary>
+            <div className="pt-4 space-y-4">
+              {myQuestions.length > 0 && (
+                <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
+                  {myQuestions.map((question) => (
+                    <div key={question.id} className="text-sm space-y-1.5 pb-3 border-b border-[#E2E8F0]">
+                      <div className="text-[#334155]">나: {question.question}</div>
+                      {question.reply
+                        ? <div className="text-[#2D6A4F]">선생님: {question.reply}</div>
+                        : <div className="text-xs text-[#64748B]">답변을 기다리고 있어요.</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+              {!isTeacherPreview && (
+                <form onSubmit={handleQuestionSubmit} className="flex gap-2">
+                  <input ref={questionInputRef} type="text" value={questionInput} onChange={(event) => setQuestionInput(event.target.value)} aria-label="질문 내용" placeholder="궁금한 점을 적어 보세요" className="min-w-0 flex-1 px-3 py-2.5 rounded-lg border border-[#CBD5E1] bg-white text-sm focus:outline-none focus:border-[#64748B]" />
+                  <button type="submit" disabled={isQuestionSubmitting} className="student-action-button shrink-0"><Send className="w-4 h-4" aria-hidden="true" />{isQuestionSubmitting ? '보내는 중' : '보내기'}</button>
+                </form>
+              )}
+            </div>
+          </details>
+        </aside>
       </div>
 
-      {/* [처음 쓴 글 · 고쳐 쓴 글 크게 비교하기] 화면 꽉 차는 대형 모달 */}
       {recoveryData && <DraftRecoveryDialog topicTitle={selectedTopic.title} currentDraft={{ pieceTitle, text: editorText }} items={recoveryData.items} legacy={recoveryData.legacy} canRestore={!isSubmitting && !isTeacherPreview && ((!isClassLocked && !isTeacherLocked) || isFinalCompleted)} onClose={() => setRecoveryData(null)} onRestore={(snapshot) => {
         const allowCompleted = isFinalCompleted;
         if (!draft.restore(snapshot, allowCompleted)) return false;
         if (allowCompleted) setIsEditingCompleted(true);
-        setHighlightedQuote(''); setShowGreenText(false); setViewingPageIdx(null); setRecoveryData(null);
+        resumeWriting();
+        setRecoveryData(null);
         return true;
       }} />}
 
-      <GrowthDiffModal
-        isOpen={isDiffModalOpen}
-        onClose={() => setIsDiffModalOpen(false)}
-        student={topicStudentData}
-        topicTitle={selectedTopic.title}
-      />
+      <GrowthDiffModal isOpen={isDiffModalOpen} onClose={() => setIsDiffModalOpen(false)} student={topicStudentData} topicTitle={selectedTopic.title} />
     </div>
   );
 }

@@ -297,6 +297,230 @@ textarea.manuscript-body {
   }
 }
 
+/* Quiet student writing surface; teacher controls keep their existing styles. */
+.student-quiet .sketch-card {
+  border-color: #D5DDE3;
+  border-radius: 16px;
+  box-shadow: none;
+}
+
+.student-notebook-layout.is-feedback-closed {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.student-notebook-layout.is-feedback-closed > .notebook-card {
+  margin-inline: auto;
+}
+
+.student-feedback-panel[hidden] {
+  display: none;
+}
+
+.student-notebook-toolbar,
+.student-paper-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #E2E8F0;
+}
+
+.student-paper-toolbar {
+  margin-bottom: 16px;
+}
+
+.student-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+
+.student-text-button,
+.student-action-button,
+.student-primary-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  font-size: 13px;
+  line-height: 1.5;
+  cursor: pointer;
+}
+
+.student-text-button {
+  color: #64748B;
+}
+
+.student-action-button {
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid #CBD5E1;
+  border-radius: 8px;
+  background: #FFF;
+  color: #475569;
+}
+
+.student-primary-button {
+  min-height: 44px;
+  padding: 10px 20px;
+  border: 1px solid #1B4332;
+  border-radius: 10px;
+  background: #1B4332;
+  color: #FFF;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.student-text-button:hover,
+.student-action-button:hover {
+  color: #1B4332;
+}
+
+.student-primary-button:hover:not(:disabled) {
+  background: #2D6A4F;
+}
+
+.student-quiet :is(button, select, summary):focus-visible {
+  outline: 2px solid #52B788;
+  outline-offset: 3px;
+}
+
+.student-quiet button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.student-select {
+  max-width: 100%;
+  min-height: 36px;
+  padding: 4px 8px;
+  border: 1px solid #E2E8F0;
+  border-radius: 8px;
+  background: #FFF;
+  color: #475569;
+  font-size: 13px;
+}
+
+.student-tools {
+  position: relative;
+}
+
+.student-tools > summary {
+  list-style: none;
+}
+
+.student-tools > summary::-webkit-details-marker {
+  display: none;
+}
+
+.student-tools-menu {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 248px;
+  max-width: calc(100vw - 32px);
+  padding: 6px;
+  border: 1px solid #E2E8F0;
+  border-radius: 10px;
+  background: #FFF;
+  box-shadow: 0 12px 32px rgb(15 23 42 / 12%);
+}
+
+.student-tools-menu > button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  color: #475569;
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.student-tools-menu > button:hover:not(:disabled) {
+  background: #F8FAFC;
+}
+
+.student-writing-guide {
+  margin-bottom: 16px;
+  color: #64748B;
+  font-size: 13px;
+}
+
+.student-writing-guide > summary,
+.student-questions > summary {
+  cursor: pointer;
+}
+
+.student-inline-notice,
+.student-view-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: #64748B;
+  font-size: 12px;
+}
+
+.student-paper-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #E2E8F0;
+}
+
+.student-feedback-item {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+  padding: 14px;
+  border: 1px solid #E2E8F0;
+  border-radius: 10px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.student-feedback-item:hover,
+.student-feedback-item.is-selected {
+  border-color: #94A3B8;
+  background: #F8FAFC;
+}
+
+.student-feedback-item blockquote {
+  padding-left: 10px;
+  border-left: 2px solid #CBD5E1;
+}
+
+.student-questions {
+  padding-top: 20px;
+  border-top: 1px solid #E2E8F0;
+}
+
+@media (max-width: 639px) {
+  .student-toolbar-actions {
+    gap: 10px;
+  }
+
+  .student-tools-menu {
+    right: auto;
+    left: 0;
+  }
+}
+
 /* 하단 고정 바 모바일 세이프 에어리어 */
 .safe-bottom-bar {
   padding-bottom: max(0.875rem, env(safe-area-inset-bottom));
