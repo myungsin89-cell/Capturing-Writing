@@ -68,6 +68,30 @@ export function hasFeedbackContent(entry) {
   return Boolean(entry.note?.trim() || entry.comments?.some((item) => item.comment?.trim()));
 }
 
+export function mergeImportedFeedback(current = {}, imported = {}) {
+  const currentNote = String(current.note || '').trim();
+  const importedNote = String(imported.note || '').trim();
+  const note = !importedNote || currentNote.includes(importedNote)
+    ? currentNote
+    : [currentNote, importedNote].filter(Boolean).join('\n\n');
+  const comments = Array.isArray(current.comments) ? [...current.comments] : [];
+  const seen = new Set(comments.map((item) => JSON.stringify([
+    String(item?.quote || '').trim(),
+    String(item?.comment || '').trim()
+  ])));
+  for (const item of Array.isArray(imported.comments) ? imported.comments : []) {
+    if (!String(item?.comment || '').trim()) continue;
+    const key = JSON.stringify([
+      String(item?.quote || '').trim(),
+      String(item?.comment || '').trim()
+    ]);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    comments.push(item);
+  }
+  return { note, comments };
+}
+
 export function wasBatchFeedbackDelivered(record, entry) {
   return Boolean(entry?.id && record?.batchFeedbackReceipt?.entryId === entry.id);
 }

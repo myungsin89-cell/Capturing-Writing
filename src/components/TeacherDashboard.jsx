@@ -14,7 +14,7 @@ import { GrowthDiffModal } from './GrowthDiffView';
 import StudentShareModal from './StudentShareModal';
 import BatchFeedbackPanel, { BatchFeedbackWorkspace } from './BatchFeedbackPanel';
 import FeedbackCriteriaDialog from './FeedbackCriteriaDialog';
-import { buildFeedbackPrompt, getSubmissionSnapshot } from '../utils/batchFeedback';
+import { buildFeedbackPrompt, getSubmissionSnapshot, mergeImportedFeedback } from '../utils/batchFeedback';
 import {
   STAGE_META,
   renderTextWithHighlight,
@@ -180,7 +180,6 @@ export default function TeacherDashboard({
   const [isCriteriaDialogOpen, setIsCriteriaDialogOpen] = useState(false);
   const [feedbackTab, setFeedbackTab] = useState('individual');
   const [docSyncStatus, setDocSyncStatus] = useState('idle');
-  const [pendingDocFeedback, setPendingDocFeedback] = useState(null);
   const docPullingRef = useRef(false);
   const docContextRef = useRef(null);
   const personalDraftCacheRef = useRef(new Map());
@@ -266,7 +265,6 @@ export default function TeacherDashboard({
     setShowPreviousFeedback(false);
     setCriteriaCopyFailed(false);
     setDocSyncStatus('idle');
-    setPendingDocFeedback(null);
     setActivePageIdx(Math.max(0, pages.length - 1));
 
     // 2차(또는 N차) 수정본 제출 상태(REVISION_SUBMITTED)일 때는 기존 1차 첨삭 내용을 비우고 '새판'으로 시작!
@@ -311,22 +309,15 @@ export default function TeacherDashboard({
         if (hasNote || hasComments) {
           const nextNote = hasNote ? translateBriskTextToKorean(res.pulledNote.trim()) : '';
           const current = docContextRef.current;
-          const preserveNote = hasNote && current.note.trim() && current.note.trim() !== nextNote.trim();
-          const preserveComments = hasComments && current.comments.length > 0 && JSON.stringify(current.comments) !== JSON.stringify(res.pulledComments);
-          if (preserveNote || preserveComments) {
-            setPendingDocFeedback({ key: contextKey, note: nextNote, comments: hasComments ? res.pulledComments : [] });
-            setDocSyncStatus('protected');
-            setWaitingDocReturn(false);
-            return;
-          }
-          if (hasNote) {
-            setFeedbackNote(nextNote);
-          }
-          if (hasComments) {
-            setModalFeedbackItems(res.pulledComments);
-          }
+          const merged = mergeImportedFeedback(
+            { note: current.note, comments: current.comments },
+            { note: nextNote, comments: hasComments ? res.pulledComments : [] }
+          );
+          setFeedbackNote(merged.note);
+          setModalFeedbackItems(merged.comments.map((item) => item.id
+            ? item
+            : { ...item, id: crypto.randomUUID() }));
           setWaitingDocReturn(false);
-          setPendingDocFeedback(null);
           setDocSyncStatus('loaded');
         } else {
           // 독스에 아직 첨삭이 들어있지 않은 경우
@@ -2396,19 +2387,9 @@ export default function TeacherDashboard({
 
                 </div>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#64748B]">
-                  <p role="status">{{ idle: '독스에서 첨삭한 뒤 돌아오면 자동으로 불러옵니다.', preparing: '최신 글로 독스를 준비하고 있습니다.', waiting: '독스에서 첨삭하는 중 · 쓰담으로 돌아오면 확인합니다.', checking: '독스 첨삭을 확인하는 중…', loaded: '독스 첨삭을 불러왔습니다.', empty: '아직 독스에 삽입된 첨삭이 없습니다.', error: '독스 첨삭을 확인하지 못했습니다.', protected: '작성 중인 조언을 유지했습니다. 가져온 첨삭을 확인해 주세요.' }[docSyncStatus]}</p>
+                  <p role="status">{{ idle: '독스에서 첨삭한 뒤 돌아오면 자동으로 불러옵니다.', preparing: '최신 글로 독스를 준비하고 있습니다.', waiting: '독스에서 첨삭하는 중 · 쓰담으로 돌아오면 확인합니다.', checking: '독스 첨삭을 확인하는 중…', loaded: '브릭스트 첨삭을 바로 불러왔습니다.', empty: '아직 독스에 삽입된 첨삭이 없습니다.', error: '독스 첨삭을 확인하지 못했습니다.' }[docSyncStatus]}</p>
                   {['empty', 'error'].includes(docSyncStatus) && <button type="button" onClick={handlePullFromDoc} disabled={isPullingDoc} className="min-h-9 font-bold text-[#2D6A4F] underline cursor-pointer">다시 확인</button>}
                 </div>
-                {pendingDocFeedback && <details className="rounded-xl border border-[#D8F3DC] bg-white p-3 text-sm"><summary className="cursor-pointer font-bold text-[#1B4332]">가져온 첨삭 보기</summary><textarea readOnly aria-label="자동 반영을 보류한 독스 첨삭" value={[pendingDocFeedback.note, ...pendingDocFeedback.comments.map((item) => `${item.quote || ''}\n${item.comment}`)].filter(Boolean).join('\n\n')} rows={5} className="mt-2 w-full rounded-lg border border-[#CBD5E1] p-2 text-sm" /><button type="button" className="sketch-btn-secondary mt-2 min-h-11 px-3 py-2 text-xs font-bold" onClick={() => {
-                  if (pendingDocFeedback.key !== docContextRef.current.key) return;
-                  if (pendingDocFeedback.note) setFeedbackNote((previous) => previous.includes(pendingDocFeedback.note) ? previous : [previous, pendingDocFeedback.note].filter(Boolean).join('\n\n'));
-                  setModalFeedbackItems((previous) => {
-                    const seen = new Set(previous.map((item) => JSON.stringify([item.quote, item.comment])));
-                    const additions = pendingDocFeedback.comments.filter((item) => { const key = JSON.stringify([item.quote, item.comment]); if (seen.has(key)) return false; seen.add(key); return true; }).map((item) => ({ ...item, id: crypto.randomUUID() }));
-                    return [...previous, ...additions];
-                  });
-                  setPendingDocFeedback(null); setDocSyncStatus('loaded');
-                }}>현재 조언에 덧붙이기</button></details>}
               </div>
 
               {/* 이전 차수(1차 등)에 학생에게 해주었던 첨삭 기록 보기 (2차 이상 첨삭 시 참고용 아코디언) */}

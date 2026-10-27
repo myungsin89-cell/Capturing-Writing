@@ -55,6 +55,31 @@ test('저장한 목표·기준·피드백 방식과 새 주제 내용을 함께 
   assert.equal(normalizeFeedbackCriteria(null).goal, '');
 });
 
+test('브릭스트 첨삭은 기존 조언을 보존하며 즉시 합치고 중복은 만들지 않는다', async () => {
+  const { mergeImportedFeedback } = await import(helperUrl);
+  const existingComment = { id: 'F1', quote: '첫 문장', comment: '좋은 표현이에요.' };
+  const merged = mergeImportedFeedback(
+    { note: '교사가 직접 쓴 조언', comments: [existingComment] },
+    {
+      note: '브릭스트 종합 조언',
+      comments: [
+        { id: 'B1', quote: '첫 문장', comment: '좋은 표현이에요.' },
+        { id: 'B2', quote: '둘째 문장', comment: '조금 더 자세히 써 보세요.' }
+      ]
+    }
+  );
+  assert.equal(merged.note, '교사가 직접 쓴 조언\n\n브릭스트 종합 조언');
+  assert.equal(merged.comments.length, 2);
+  assert.equal(merged.comments[0], existingComment);
+  assert.equal(merged.comments[1].id, 'B2');
+
+  const repeated = mergeImportedFeedback(merged, {
+    note: '브릭스트 종합 조언',
+    comments: [{ quote: '둘째 문장', comment: '조금 더 자세히 써 보세요.' }]
+  });
+  assert.deepEqual(repeated, merged);
+});
+
 test('검토한 피드백은 해당 학생·해당 주제만 수정 모드로 열고 차수에 기록한다', async () => {
   const { applyFeedbackToStudent, getSubmissionSnapshot } = await import(helperUrl);
   const record = submission();
