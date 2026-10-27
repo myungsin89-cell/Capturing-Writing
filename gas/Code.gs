@@ -486,11 +486,12 @@ function submitStageV2(payload) {
   const isActive = activeTopic && String(activeTopic.id) === String(topic.id);
   const existingTopicRecord = student.historyByTopic && student.historyByTopic[topic.id];
   const isStudentLocked = isActive ? student.locked : Boolean(existingTopicRecord && existingTopicRecord.locked);
+  const submissionRecord = isActive ? student : (existingTopicRecord || {});
   
   if (topic.classLocked) {
     return { ok: false, error: '선생님이 학급 글쓰기를 마감했습니다. 선생님께 문의해 주세요.' };
   }
-  if (isStudentLocked && !payload.allowRevision && !payload.isRecallUpdate && !student.recalled) {
+  if (isStudentLocked && !payload.allowRevision && !payload.isRecallUpdate && !submissionRecord.recalled) {
     return { ok: false, error: '현재는 제출이 마감되어 있습니다. 선생님께 문의해 주세요.' };
   }
 
@@ -503,14 +504,13 @@ function submitStageV2(payload) {
 
   const now = Utilities.formatDate(new Date(), 'Asia/Seoul', 'yyyy-MM-dd HH:mm');
   const nowIso = new Date().toISOString();
-  const submissionRecord = isActive ? student : (existingTopicRecord || {});
   const submittedRecord = appendDraftRevisionV2_(
     submissionRecord,
     text,
     pieceTitle,
     now,
     nowIso,
-    { isRecallUpdate: Boolean(payload.isRecallUpdate || student.recalled) }
+    { isRecallUpdate: Boolean(payload.isRecallUpdate || submissionRecord.recalled) }
   );
   if (isActive) {
     Object.keys(submittedRecord).forEach(function(key) {
@@ -550,13 +550,19 @@ function unsubmitStageV2(payload) {
   const student = state.students[studentIndex];
   const activeTopic = findActiveTopicV2_(state, session.classId);
   const isActive = activeTopic && String(activeTopic.id) === String(topic.id);
+  const nowIso = new Date().toISOString();
   
   if (isActive) {
     student.locked = false;
     student.recalled = true;
+    student.updatedAtIso = nowIso;
     if (student.status === 'STAGE_1_SUBMITTED') {
       student.status = 'STAGE_1_WRITING';
-    } else if (student.status === 'REVISION_SUBMITTED') {
+    } else if (
+      student.status === 'REVISION_SUBMITTED' ||
+      student.status === 'STAGE_2_SUBMITTED' ||
+      student.status === 'STAGE_3_COMPLETED'
+    ) {
       student.status = 'FEEDBACK_DONE';
     }
   } else {
@@ -564,12 +570,18 @@ function unsubmitStageV2(payload) {
     const record = student.historyByTopic[topic.id] || {};
     record.locked = false;
     record.recalled = true;
+    record.updatedAtIso = nowIso;
     if (record.status === 'STAGE_1_SUBMITTED') {
       record.status = 'STAGE_1_WRITING';
-    } else if (record.status === 'REVISION_SUBMITTED') {
+    } else if (
+      record.status === 'REVISION_SUBMITTED' ||
+      record.status === 'STAGE_2_SUBMITTED' ||
+      record.status === 'STAGE_3_COMPLETED'
+    ) {
       record.status = 'FEEDBACK_DONE';
     }
     student.historyByTopic[topic.id] = record;
+    student.updatedAtIso = nowIso;
   }
 
   state.students[studentIndex] = student;

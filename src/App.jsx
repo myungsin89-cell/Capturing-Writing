@@ -958,7 +958,13 @@ export default function App() {
 
         if (isActive) {
           const nextStatus = st.status === 'STAGE_1_SUBMITTED' ? 'STAGE_1_WRITING' : 'FEEDBACK_DONE';
-          return { ...st, locked: false, recalled: true, status: nextStatus };
+          return {
+            ...st,
+            locked: false,
+            recalled: true,
+            status: nextStatus,
+            updatedAtIso: new Date().toISOString()
+          };
         }
 
         const prevTopicData = st.historyByTopic?.[topicId] || {};
@@ -967,8 +973,15 @@ export default function App() {
           ...st,
           historyByTopic: {
             ...(st.historyByTopic || {}),
-            [topicId]: { ...prevTopicData, locked: false, recalled: true, status: nextStatus }
-          }
+            [topicId]: {
+              ...prevTopicData,
+              locked: false,
+              recalled: true,
+              status: nextStatus,
+              updatedAtIso: new Date().toISOString()
+            }
+          },
+          updatedAtIso: new Date().toISOString()
         };
       })
     );

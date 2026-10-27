@@ -1440,6 +1440,80 @@ export async function callDirectSheetStudentApi(payload = {}) {
 
     const bridgeToken = state.config?.teacherBridgeToken;
 
+    if (action === 'unsubmitStage') {
+      const studentIdx = state.students.findIndex(
+        (s) =>
+          belongsToClass(s, classId) &&
+          String(s.number).trim() === String(number).trim()
+      );
+      if (studentIdx < 0) {
+        return { ok: false, error: '학생 정보를 찾을 수 없습니다.' };
+      }
+
+      const student = { ...state.students[studentIdx] };
+      const activeTopic = findActiveTopic(classId);
+      const topic =
+        state.topics.find(
+          (item) =>
+            String(item.id) === String(payload.topicId) && belongsToClass(item, classId)
+        ) || activeTopic;
+      if (!topic) return { ok: false, error: '글쓰기 주제를 찾을 수 없습니다.' };
+      if (topic.classLocked) {
+        return { ok: false, error: '선생님이 학급 글쓰기를 마감하여 회수할 수 없습니다.' };
+      }
+
+      const isActive = !activeTopic || String(topic.id) === String(activeTopic.id);
+      const topicRecord = isActive ? student : student.historyByTopic?.[topic.id] || {};
+      if (topicRecord.status === 'FINAL_COMPLETED') {
+        return {
+          ok: false,
+          error: '최종 완성된 글은 회수할 수 없습니다. 이어서 더 고쳐 쓰기를 이용해 주세요.'
+        };
+      }
+      if (getStoredDraftHistory(topicRecord).length === 0) {
+        return { ok: false, error: '아직 회수할 제출 글이 없습니다.' };
+      }
+
+      const nextStatus =
+        topicRecord.status === 'STAGE_1_SUBMITTED' ? 'STAGE_1_WRITING' : 'FEEDBACK_DONE';
+      const recalledRecord = {
+        ...topicRecord,
+        locked: false,
+        recalled: true,
+        status: nextStatus,
+        updatedAtIso: new Date().toISOString()
+      };
+
+      if (isActive) {
+        Object.assign(student, recalledRecord, { classId });
+      } else {
+        student.historyByTopic = {
+          ...(student.historyByTopic || {}),
+          [topic.id]: recalledRecord
+        };
+        student.updatedAtIso = recalledRecord.updatedAtIso;
+      }
+      state.students[studentIdx] = student;
+
+      if (!bridgeToken) {
+        return {
+          ok: false,
+          error: '선생님 화면이 연결되면 제출을 회수할 수 있습니다. 선생님께 쓰담 화면을 한 번 열어 달라고 알려 주세요.'
+        };
+      }
+
+      await saveFullStateToSpreadsheet(bridgeToken, spreadsheetId, {
+        classes: state.classes,
+        topics: state.topics,
+        students: state.students,
+        questions: state.questions,
+        config: state.config,
+        replaceRemoteRecords: true
+      });
+
+      return { ok: true, student };
+    }
+
     if (action === 'submitStage') {
       const studentIdx = state.students.findIndex(
         (s) =>
@@ -1458,7 +1532,19 @@ export async function callDirectSheetStudentApi(payload = {}) {
       const isActive = !topic || !activeTopic || String(topic.id) === String(activeTopic.id);
       const existingTopicRecord = topic ? student.historyByTopic?.[topic.id] : null;
       const isStudentLocked = isActive ? student.locked : Boolean(existingTopicRecord?.locked);
-      if (isStudentLocked || topic?.classLocked) {
+      const submissionRecord = isActive ? student : existingTopicRecord || {};
+      if (topic?.classLocked) {
+        return {
+          ok: false,
+          error: '선생님이 학급 글쓰기를 마감했습니다. 선생님께 문의해 주세요.'
+        };
+      }
+      if (
+        isStudentLocked &&
+        !payload.allowRevision &&
+        !payload.isRecallUpdate &&
+        !submissionRecord.recalled
+      ) {
         return {
           ok: false,
           error: '현재는 제출이 마감되어 있습니다. 선생님께 문의해 주세요.'
@@ -1481,14 +1567,16 @@ export async function callDirectSheetStudentApi(payload = {}) {
         minute: '2-digit'
       });
       const nowIso = new Date().toISOString();
-      const submissionRecord = isActive ? student : existingTopicRecord || {};
-      const stage = getStoredDraftHistory(submissionRecord).length + 1;
+      const isRecallUpdate = Boolean(payload.isRecallUpdate || submissionRecord.recalled);
+      const storedRoundCount = getStoredDraftHistory(submissionRecord).length;
+      const stage = Math.max(1, storedRoundCount + (isRecallUpdate ? 0 : 1));
       const submittedRecord = appendStoredDraftRevision(
         submissionRecord,
         text,
         pieceTitle,
         `오늘 ${now}`,
-        nowIso
+        nowIso,
+        { isRecallUpdate }
       );
 
       if (isActive) {
