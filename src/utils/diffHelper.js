@@ -92,48 +92,26 @@ import { getUsableDraftHistory } from './topicTransition.js';
  */
 export function renderTextWithHighlight(text = '', highlightedQuote = '') {
   if (!text) return null;
-  const paragraphs = text.replace(/\r\n/g, '\n').split('\n');
+  const normalizedText = text.replace(/\r\n/g, '\n');
   const cleanQuote = (highlightedQuote || '').trim();
+  if (!cleanQuote || !normalizedText.includes(cleanQuote)) return normalizedText;
 
-  return paragraphs.map((para, pIdx) => {
-    if (!para.trim()) {
-      return React.createElement('div', { key: pIdx, className: 'h-4' });
-    }
-
-    if (!cleanQuote || !para.includes(cleanQuote)) {
-      return React.createElement(
-        'p',
-        { key: pIdx, className: 'mb-2 last:mb-0 leading-8' },
-        para
-      );
-    }
-
-    const parts = para.split(cleanQuote);
-    const children = [];
-    parts.forEach((part, idx) => {
-      children.push(part);
-      if (idx < parts.length - 1) {
-        children.push(
-          React.createElement(
-            'mark',
-            {
-              key: `hl_${idx}`,
-              id: 'active-highlight-quote',
-              className:
-                'bg-[#FEF08A] text-[#1E293B] font-bold px-1.5 py-0.5 rounded-md border-b-2 border-[#F59E0B] shadow-2xs transition-all duration-300'
-            },
-            cleanQuote
-          )
-        );
-      }
-    });
-
-    return React.createElement(
-      'p',
-      { key: pIdx, className: 'mb-2 last:mb-0 leading-8' },
-      children
-    );
-  });
+  const parts = normalizedText.split(cleanQuote);
+  return parts.flatMap((part, index) => index < parts.length - 1
+    ? [
+        part,
+        React.createElement(
+          'mark',
+          {
+            key: `hl_${index}`,
+            id: index === 0 ? 'active-highlight-quote' : undefined,
+            className:
+              'bg-[#FEF08A] text-[#1E293B] font-bold px-1.5 py-0.5 rounded-md border-b-2 border-[#F59E0B] shadow-2xs transition-all duration-300'
+          },
+          cleanQuote
+        )
+      ]
+    : [part]);
 }
 
 /**
