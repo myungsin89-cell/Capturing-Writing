@@ -24,6 +24,7 @@ import {
   isSubmittedWritingStatus
 } from '../utils/diffHelper';
 import { questionBelongsToTopic } from '../utils/questionHelper';
+import { groupTeacherRoster } from '../utils/teacherRoster';
 import { translateBriskTextToKorean } from '../services/googleDriveService';
 import {
   ExternalLink,
@@ -1903,21 +1904,8 @@ export default function TeacherDashboard({
               };
             });
 
-            const actionNeededList = enrichedList
-              .filter((item) => item.needsAction)
-              .sort(
-                (a, b) =>
-                  b.priorityScore - a.priorityScore ||
-                  Number(a.st.number) - Number(b.st.number)
-              );
-
-            const normalList = enrichedList
-              .filter((item) => !item.needsAction)
-              .sort((a, b) => Number(a.st.number) - Number(b.st.number));
-
-            const numberSortedList = [...enrichedList].sort(
-              (a, b) => Number(a.st.number) - Number(b.st.number)
-            );
+            const rosterGroups = groupTeacherRoster(enrichedList, studentSortMode);
+            const remainingCount = rosterGroups.actionNeeded.length + rosterGroups.inProgress.length;
 
             const renderStudentRow = ({ st, unresolvedCount, needsAction }) => {
               const isSelected = String(st.number) === String(selectedStudent?.number);
@@ -1988,6 +1976,11 @@ export default function TeacherDashboard({
                   <select aria-label="학생 명단 정렬" value={studentSortMode} onChange={(event) => setStudentSortMode(event.target.value)} className="min-h-9 min-w-0 rounded-lg border border-[#CBD5E1] bg-white px-2 text-xs text-[#475569]"><option value="priority">할 일 우선</option><option value="number">번호순</option></select>
                 </div>
 
+                <div className="mb-3 flex flex-wrap items-center gap-2 text-xs font-bold shrink-0" aria-label="글쓰기 진행 현황">
+                  <span className="px-2.5 py-1 rounded-lg bg-[#FEF3C7] text-[#92400E]">남은 학생 {remainingCount}명</span>
+                  <span className="px-2.5 py-1 rounded-lg bg-[#D8F3DC] text-[#1B4332]">최종 완성 {rosterGroups.completed.length}명</span>
+                </div>
+
                 <div role="tablist" aria-label="피드백 작업 선택" className="mb-3 flex shrink-0 rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] p-1" onKeyDown={(event) => {
                   if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
                   event.preventDefault();
@@ -2001,31 +1994,19 @@ export default function TeacherDashboard({
                 {feedbackTab === 'batch' && <div className="mb-2 shrink-0 flex flex-wrap items-center justify-between gap-2 text-xs"><button type="button" disabled={Boolean(batch.busy)} onClick={batch.selectWaiting} className="min-h-9 underline cursor-pointer">대기 학생 선택</button><button type="button" disabled={Boolean(batch.busy)} onClick={batch.clearSelection} className="min-h-9 underline cursor-pointer">선택 해제</button></div>}
 
                 <div className="space-y-2.5 flex-1 overflow-y-auto pt-2 pr-1.5">
-                  {studentSortMode === 'priority' && actionNeededList.length > 0 ? (
-                    <>
-                      <div className="px-2 py-1 rounded-lg bg-[#FEF3C7]/80 border border-[#FDE68A] text-[11px] font-bold text-[#92400E] flex items-center justify-between">
-                        <span>첨삭 · 답변 대기 학생</span>
-                        <span>{actionNeededList.length}명</span>
-                      </div>
-                      <div className="space-y-2.5">
-                        {actionNeededList.map(renderStudentRow)}
-                      </div>
-
-                      {normalList.length > 0 && (
-                        <>
-                          <div className="pt-2 px-1 text-[11px] font-bold text-[#64748B] flex items-center justify-between border-t border-dashed border-[#CBD5E1]">
-                            <span>작성 중 · 첨삭 완료 학생</span>
-                            <span>{normalList.length}명</span>
-                          </div>
-                          <div className="space-y-2.5">
-                            {normalList.map(renderStudentRow)}
-                          </div>
-                        </>
-                      )}
-                    </>
-                  ) : (
-                    numberSortedList.map(renderStudentRow)
-                  )}
+                  {[
+                    { key: 'actionNeeded', label: '첨삭 · 답변 대기 학생', color: 'bg-[#FEF3C7]/80 border-[#FDE68A] text-[#92400E]' },
+                    { key: 'inProgress', label: '진행 중인 학생', color: 'bg-[#F8FAFC] border-[#CBD5E1] text-[#475569]' },
+                    { key: 'completed', label: '최종 완성 학생', color: 'bg-[#D8F3DC] border-[#52B788] text-[#1B4332]' }
+                  ].map(({ key, label, color }) => rosterGroups[key].length > 0 && (
+                    <section key={key} aria-label={label} className="space-y-2.5">
+                      <h3 className={`px-2 py-1 rounded-lg border text-[11px] font-bold flex items-center justify-between ${color}`}>
+                        <span>{label}</span>
+                        <span>{rosterGroups[key].length}명</span>
+                      </h3>
+                      <div className="space-y-2.5">{rosterGroups[key].map(renderStudentRow)}</div>
+                    </section>
+                  ))}
                 </div>
                 {feedbackTab === 'batch' && <div className="mt-3 border-t border-[#E2E8F0] pt-3 shrink-0 space-y-2"><button type="button" disabled={Boolean(batch.busy) || !batch.chosen.length || !googleAuth?.accessToken} onClick={() => batch.prepare()} className="sketch-btn-primary min-h-11 w-full px-3 py-2 text-sm font-bold disabled:opacity-50">선택한 {batch.chosen.length}명 묶음 준비</button><p className="text-[11px] text-[#64748B]">{batch.busy || (!googleAuth?.accessToken ? '구글 로그인 후 준비할 수 있습니다.' : '제출 대기 학생만 선택할 수 있습니다.')}</p></div>}
               </>

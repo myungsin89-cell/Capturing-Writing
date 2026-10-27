@@ -140,12 +140,11 @@
 
 .student-notebook-layout,
 .teacher-review-layout {
-  --notebook-width: min(960px, 100cqw);
-  --roster-width: 280px;
+  --notebook-width: min(920px, 100cqw);
+  --roster-width: clamp(280px, 18cqw, 360px);
   --feedback-width: 400px;
   width: 100%;
-  max-width: var(--notebook-width);
-  margin-inline: auto;
+  max-width: 100%;
 }
 
 .student-notebook-layout,
@@ -166,9 +165,9 @@
 .notebook-column,
 .notebook-card {
   width: 100%;
-  max-width: var(--notebook-width, 960px);
+  max-width: var(--notebook-width, 920px);
   min-width: 0;
-  margin-inline: auto;
+  margin-inline: 0;
 }
 
 .notebook-card {
@@ -250,12 +249,11 @@ textarea.manuscript-body {
 @media (min-width: 1200px) {
   .student-notebook-layout,
   .teacher-review-layout {
-    --notebook-width: min(960px, calc(100cqw - 304px));
+    --notebook-width: min(920px, calc(100cqw - var(--roster-width) - 24px));
   }
 
   .teacher-review-layout {
     grid-template-columns: var(--roster-width) minmax(0, 1fr);
-    max-width: calc(var(--roster-width) + 24px + var(--notebook-width));
   }
 
   .teacher-student-list {
@@ -265,24 +263,21 @@ textarea.manuscript-body {
   }
 }
 
+@media (min-width: 1440px) {
+  .student-notebook-layout {
+    grid-template-columns: var(--notebook-width) minmax(var(--feedback-width), 1fr);
+  }
+}
+
 /* Only show all three columns when the manuscript can stay comfortably wide. */
 @media (min-width: 1700px) {
   .student-notebook-layout,
   .teacher-review-layout {
-    --notebook-width: min(960px, calc(100cqw - 728px));
-  }
-
-  .student-notebook-layout {
-    grid-template-columns: var(--notebook-width) var(--feedback-width);
-    max-width: calc(var(--notebook-width) + 24px + var(--feedback-width));
-  }
-
-  .teacher-review-layout {
-    max-width: calc(var(--roster-width) + var(--notebook-width) + var(--feedback-width) + 48px);
+    --notebook-width: min(920px, calc(100cqw - var(--roster-width) - var(--feedback-width) - 48px));
   }
 
   .teacher-individual-layout {
-    grid-template-columns: var(--notebook-width) var(--feedback-width);
+    grid-template-columns: var(--notebook-width) minmax(var(--feedback-width), 1fr);
   }
 }
 
