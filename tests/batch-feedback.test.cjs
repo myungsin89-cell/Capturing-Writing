@@ -208,6 +208,24 @@ async function loadGoogleService() {
   return import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}#${Math.random()}`);
 }
 
+test('브릭스트 기준 제목과 잘한 점·고쳐볼 점을 읽기 좋은 줄로 자동 정돈한다', async () => {
+  const service = await loadGoogleService();
+  const raw = '문제 상황 설명 : • 잘한 점: 문제를 구체적으로 설명했어요.\n• 고쳐볼 점: 문장 사이를 띄어 주세요.\n\n제안하는 내용 : • 잘한 점: 제안이 명확해요.\n• 고쳐볼 점: 조금 더 구체적으로 써 보세요.';
+  const formatted = service.translateBriskTextToKorean(raw);
+  assert.equal(formatted, [
+    '문제 상황 설명',
+    '',
+    '• 잘한 점: 문제를 구체적으로 설명했어요.',
+    '• 고쳐볼 점: 문장 사이를 띄어 주세요.',
+    '',
+    '제안하는 내용',
+    '',
+    '• 잘한 점: 제안이 명확해요.',
+    '• 고쳐볼 점: 조금 더 구체적으로 써 보세요.'
+  ].join('\n'));
+  assert.equal(service.translateBriskTextToKorean(formatted), formatted);
+});
+
 function sheetFixture(t, record = submission()) {
   let state = {
     classes: [{ id: 'C1' }], topics: [{ id: 'T1', classId: 'C1', isActive: true }],

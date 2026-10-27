@@ -1053,7 +1053,7 @@ export function translateBriskHeader(rawHeader = '') {
 
 export function translateBriskTextToKorean(rawText = '') {
   if (!rawText) return '';
-  return String(rawText)
+  const translated = String(rawText)
     .replace(
       /^[\s✨🌟🌱💡❓•\-*\[\]()]*\b(GLOWS?|STRENGTHS?)\b[\s:：\-—\]()]*/gim,
       '[칭찬해요 · 잘한 점]\n'
@@ -1077,9 +1077,33 @@ export function translateBriskTextToKorean(rawText = '') {
     .replace(
       /\b(WONDERINGS?)\s*[:：]\s*/gi,
       '[궁금해요 · 더 생각해 볼 점]\n'
+    );
+  return formatBriskFeedbackText(translated);
+}
+
+export function formatBriskFeedbackText(rawText = '') {
+  if (!rawText) return '';
+  let text = String(rawText)
+    .replace(/\r\n?/g, '\n')
+    .replace(/\u00a0/g, ' ')
+    // 표에서 한 줄로 합쳐진 평가 항목을 각각 새 줄로 분리합니다.
+    .replace(/[ \t]*[•●▪◦]\s*(잘한\s*점|고쳐\s*볼?\s*점)\s*[:：]\s*/g, (_match, label) => {
+      const cleanLabel = label.replace(/\s+/g, '').replace('고쳐볼점', '고쳐볼 점').replace('잘한점', '잘한 점');
+      return `\n• ${cleanLabel}: `;
+    })
+    .replace(/[ \t]+([•●▪◦])\s*/g, '\n$1 ')
+    // "문제 상황 설명 : • 잘한 점"처럼 붙은 기준 제목을 독립된 줄로 만듭니다.
+    .replace(
+      /(^|\n)[ \t]*([^\n:：•●▪◦]{1,50}?)[ \t]*[:：][ \t]*(?=\n•\s*(?:잘한 점|고쳐볼 점))/g,
+      (_match, prefix, heading) => `${prefix}${heading.trim()}\n`
     )
+    // 원래 줄바꿈과 새로 넣은 줄바꿈이 겹쳐도 글머리표 사이는 한 줄만 둡니다.
+    .replace(/\n{2,}(?=•)/g, '\n')
+    .replace(/(^|\n)([^\n•●▪◦]{1,50})\n(?=•\s*(?:잘한 점|고쳐볼 점))/g, '$1$2\n\n')
+    .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  return text;
 }
 
 /**
