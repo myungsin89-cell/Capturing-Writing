@@ -667,8 +667,15 @@ async function writeFullStateToSpreadsheet(
 }
 
 function getStoredDraftHistory(record = {}) {
-  if (Array.isArray(record.draftHistory) && record.draftHistory.length > 0) {
-    return record.draftHistory.filter((draft) => draft?.text && String(draft.text).trim());
+  const isFreshTopic = record.status === 'STAGE_1_WRITING' && !record.recalled &&
+    !String(record.pieceTitle || '').trim() &&
+    ![record.draft1, record.draft2, record.draft3, record.draft4, record.draft5]
+      .some((text) => String(text || '').trim());
+  const storedHistory = isFreshTopic ? [] : (Array.isArray(record.draftHistory)
+    ? record.draftHistory.filter((draft) => draft?.text && String(draft.text).trim())
+    : []);
+  if (storedHistory.length > 0) {
+    return storedHistory;
   }
   const rawDrafts = [record.draft1, record.draft2, record.draft3, record.draft4, record.draft5]
     .filter((text) => text && String(text).trim());

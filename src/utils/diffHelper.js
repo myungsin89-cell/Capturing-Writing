@@ -84,6 +84,7 @@ export function computeKoreanDiff(oldText = '', newText = '') {
 }
 
 import React from 'react';
+import { getUsableDraftHistory } from './topicTransition.js';
 
 /**
  * 본문에서 특정 문장(highlightedQuote)을 찾아 노란 형광펜으로 하이라이트 렌더링하는 헬퍼
@@ -181,9 +182,9 @@ export function renderTextWithGreenAdditions(
 export function getStudentDraftPages(student) {
   if (!student) return [];
 
-  if (Array.isArray(student.draftHistory) && student.draftHistory.length > 0) {
-    return student.draftHistory
-      .filter((d) => d && d.text && d.text.trim())
+  const storedHistory = getUsableDraftHistory(student);
+  if (storedHistory.length > 0) {
+    return storedHistory
       .map((d, idx) => ({
         round: idx + 1,
         label: `${idx + 1}차 글`,

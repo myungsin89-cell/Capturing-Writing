@@ -24,6 +24,7 @@ import {
 } from './utils/legacyDemoMigration';
 import { shouldAutoSaveTeacherState } from './utils/syncPolicy';
 import { getFeedbackTopicRecord, isMatchingSubmission, normalizeFeedbackCriteria, wasBatchFeedbackDelivered } from './utils/batchFeedback';
+import { getUsableDraftHistory, repairLeakedDraftHistory, transitionStudentToNewTopic } from './utils/topicTransition.js';
 
 const STORAGE_KEYS = {
   GAS_URL: 'sseudam_gas_url_v5',
@@ -95,8 +96,9 @@ function dedupeQuestions(items = []) {
 }
 
 function getDraftHistory(record = {}) {
-  if (Array.isArray(record.draftHistory) && record.draftHistory.length > 0) {
-    return record.draftHistory.filter((draft) => draft?.text && String(draft.text).trim());
+  const storedHistory = getUsableDraftHistory(record);
+  if (storedHistory.length > 0) {
+    return storedHistory;
   }
 
   const rawDrafts = [record.draft1, record.draft2, record.draft3, record.draft4, record.draft5]
@@ -343,6 +345,24 @@ export default function App() {
     if (isStudentUrlMode) return;
     localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
   }, [students, isStudentUrlMode]);
+
+  // 예전 새 주제 전환에서 남은 draftHistory가 빈 공책에 섞인 경우 한 번 정리합니다.
+  useEffect(() => {
+    const previousTopicId = visibleTopics.find(
+      (topic) => String(topic.id) !== String(config.activeTopicId)
+    )?.id;
+    if (!previousTopicId) return;
+    setStudents((previous) => {
+      let changed = false;
+      const next = previous.map((student) => {
+        if (!belongsToActiveClass(student)) return student;
+        const repaired = repairLeakedDraftHistory(student, previousTopicId);
+        if (repaired !== student) changed = true;
+        return repaired;
+      });
+      return changed ? next : previous;
+    });
+  }, [config.activeTopicId, students, topics]);
 
   useEffect(() => {
     if (isStudentUrlMode) return;
@@ -1248,45 +1268,16 @@ export default function App() {
     const newTopicId = 'TOPIC_' + Date.now();
     const todayStr = new Date().toLocaleDateString('ko-KR');
     const prevActiveId = config.activeTopicId || 'TOPIC_1';
+    const nowIso = new Date().toISOString();
 
     setStudents((prev) =>
       prev.map((st) =>
         belongsToActiveClass(st)
-          ? {
-              ...st,
+          ? transitionStudentToNewTopic(st, {
+              previousTopicId: prevActiveId,
               classId: activeClassId,
-              historyByTopic: {
-                ...(st.historyByTopic || {}),
-                ...(prevActiveId
-                  ? {
-                      [prevActiveId]: {
-                        status: st.status,
-                        pieceTitle: st.pieceTitle || '',
-                        draft1: st.draft1,
-                        draft2: st.draft2,
-                        draft3: st.draft3,
-                        draft4: st.draft4,
-                        teacherNote: st.teacherNote,
-                        feedbackItems: st.feedbackItems,
-                        docId: st.docId,
-                        docUrl: st.docUrl
-                      }
-                    }
-                  : {})
-              },
-              status: 'STAGE_1_WRITING',
-              locked: false,
-              pieceTitle: '',
-              draft1: '',
-              draft2: '',
-              draft3: '',
-              draft4: '',
-              teacherNote: '',
-              feedbackItems: [],
-              docId: 'DEMO_DOC_' + st.number,
-              docUrl: 'https://docs.google.com/document/u/0/',
-              updatedAtIso: new Date().toISOString()
-            }
+              nowIso
+            })
           : st
       )
     );

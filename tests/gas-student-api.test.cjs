@@ -248,6 +248,45 @@ test('여러 번 고쳐 쓴 글은 차수별로 누적되고 자동으로 최종
   assert.notEqual(third.student.status, 'FINAL_COMPLETED');
 });
 
+test('새 주제에 잘못 남은 이전 draftHistory는 첫 제출 차수에 섞지 않는다', () => {
+  const { context } = makeHarness();
+  const login = context.studentLoginV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    classId: 'CLASS_A',
+    accessKey: 'class-secret',
+    number: '1',
+    name: '가학생'
+  });
+  const stateContext = context.readAppStateV2_('spreadsheet-id-1234567890');
+  stateContext.state.students[0] = {
+    ...stateContext.state.students[0],
+    status: 'STAGE_1_WRITING',
+    locked: false,
+    pieceTitle: '',
+    draft1: '',
+    draft2: '',
+    draftHistory: [
+      { round: 1, text: '이전 주제 글' },
+      { round: 2, text: '이전 주제 수정본' }
+    ]
+  };
+  context.writeAppStateV2_(stateContext);
+
+  const submitted = context.submitStageV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    sessionToken: login.sessionToken,
+    topicId: 'TOPIC_A',
+    stage: 1,
+    pieceTitle: '새 주제 제목',
+    text: '새 주제의 첫 글'
+  });
+
+  assert.equal(submitted.ok, true);
+  assert.equal(submitted.student.status, 'STAGE_1_SUBMITTED');
+  assert.equal(submitted.student.draftHistory.length, 1);
+  assert.equal(submitted.student.draftHistory[0].text, '새 주제의 첫 글');
+});
+
 test('학생은 제출 후 회수(unsubmit)하여 수정하고 다시 제출할 수 있다', () => {
   const { context } = makeHarness();
   const login = context.studentLoginV2({

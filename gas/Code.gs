@@ -379,7 +379,12 @@ function studentRefreshV2(payload) {
 
 function getDraftHistoryV2_(record) {
   record = record || {};
-  if (Array.isArray(record.draftHistory) && record.draftHistory.length > 0) {
+  var isFreshTopic = record.status === 'STAGE_1_WRITING' && !record.recalled &&
+    !String(record.pieceTitle || '').trim() &&
+    ![record.draft1, record.draft2, record.draft3, record.draft4, record.draft5].some(function(text) {
+      return String(text || '').trim();
+    });
+  if (!isFreshTopic && Array.isArray(record.draftHistory) && record.draftHistory.length > 0) {
     return record.draftHistory.filter(function(draft) {
       return draft && draft.text && String(draft.text).trim();
     });

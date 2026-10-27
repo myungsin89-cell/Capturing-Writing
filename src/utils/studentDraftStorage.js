@@ -1,3 +1,5 @@
+import { getUsableDraftHistory } from './topicTransition.js';
+
 export const STUDENT_DRAFT_PREFIX = 'sseudam_local_draft_v2:';
 export const MAX_DRAFT_HISTORY = 12;
 const CHECKPOINT_MS = 30000;
@@ -16,8 +18,9 @@ export function getStudentDraftKey(owner) {
 }
 
 export function getDraftBase(record = {}) {
-  const history = Array.isArray(record.draftHistory) && record.draftHistory.length
-    ? record.draftHistory.filter((draft) => String(draft?.text || '').trim())
+  const storedHistory = getUsableDraftHistory(record);
+  const history = storedHistory.length
+    ? storedHistory
     : [record.draft1, record.draft2, record.draft3, record.draft4, record.draft5]
       .filter((text) => String(text || '').trim()).map((text) => ({ text }));
   const latest = history.at(-1);
