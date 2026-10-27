@@ -2,6 +2,15 @@ const SUBMITTED = new Set([
   'STAGE_1_SUBMITTED', 'STAGE_2_SUBMITTED', 'STAGE_3_COMPLETED', 'REVISION_SUBMITTED'
 ]);
 
+export const BRISK_BATCH_FEEDBACK_URL = 'https://app.briskteaching.com/batch_feedback';
+const KOREAN_FEEDBACK_INSTRUCTION = '피드백의 제목, 본문, 질문을 모두 한국어로만 작성해 주세요. 영어 항목명 대신 잘한 점, 고쳐볼 점, 생각해 볼 질문을 사용해 주세요.';
+
+export function ensureKoreanFeedbackPrompt(prompt = '') {
+  return prompt.includes(KOREAN_FEEDBACK_INSTRUCTION)
+    ? prompt
+    : [KOREAN_FEEDBACK_INSTRUCTION, prompt].filter(Boolean).join('\n\n');
+}
+
 export const DEFAULT_FEEDBACK_CRITERIA = {
   goal: '',
   criteria: '',
@@ -16,7 +25,7 @@ export function normalizeFeedbackCriteria(value = {}) {
 
 export function buildFeedbackPrompt(topic, value) {
   const settings = normalizeFeedbackCriteria(value);
-  return [
+  return ensureKoreanFeedbackPrompt([
     '초등학생의 글을 읽고 학생 눈높이에 맞는 다정한 한국어로 피드백해 주세요.',
     `글쓰기 주제: ${topic.title || ''}`,
     topic.prompt && `학생에게 안내한 내용: ${topic.prompt}`,
@@ -24,7 +33,7 @@ export function buildFeedbackPrompt(topic, value) {
     settings.criteria && `살펴볼 기준:\n${settings.criteria}`,
     settings.guidance && `피드백 방식:\n${settings.guidance}`,
     '각 학생의 글을 개별적으로 읽고, 해당 글에 있는 내용만 근거로 삼아 주세요.'
-  ].filter(Boolean).join('\n\n');
+  ].filter(Boolean).join('\n\n'));
 }
 
 export function getFeedbackTopicRecord(student, topic, activeTopicId) {

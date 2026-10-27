@@ -1113,7 +1113,7 @@ export function formatBriskFeedbackText(rawText = '') {
 /**
  * 구글 독스에서 Brisk Teaching으로 삽입된 표(Table)/첨삭 문단과 댓글(Comment)을 자동으로 읽어옵니다.
  */
-export async function pullBriskFeedbackFromGoogleDoc(accessToken, docId, studentCurrentText = '', { strictComments = false } = {}) {
+export async function pullBriskFeedbackFromGoogleDoc(accessToken, docId, studentCurrentText = '', { strictComments = false, sourceTitle = '', authorName = '' } = {}) {
   if (!accessToken || !docId || String(docId).startsWith('DEMO_')) {
     return null;
   }
@@ -1123,12 +1123,12 @@ export async function pullBriskFeedbackFromGoogleDoc(accessToken, docId, student
     accessToken
   );
 
-  const studentLines = new Set(
+  const originalLines =
     String(studentCurrentText || '')
-      .split('\n')
+      .split(/\r?\n/)
       .map((l) => l.trim())
-      .filter(Boolean)
-  );
+      .filter(Boolean);
+  const studentLines = new Set(originalLines);
 
   const readStructuralElements = (elements) => {
     let text = '';
@@ -1146,8 +1146,21 @@ export async function pullBriskFeedbackFromGoogleDoc(accessToken, docId, student
 
   const extraBlocks = [];
   let markerPassed = false;
+  // Batch feedback may be inserted below the essay. Only read trailing paragraphs
+  // after locating the exact title, author, and original body in the document.
+  // If the source cannot be verified, retain the conservative pre-marker behavior.
+  const elements = doc.body?.content || [];
+  const paragraphs = elements.map((element, index) => ({ index, text: element.paragraph ? readStructuralElements([element]) : '' })).filter((item) => item.text);
+  const markerIndex = paragraphs.findIndex((item) => item.text.includes(STUDENT_TEXT_MARKER));
+  const cleanSourceTitle = String(sourceTitle || '').trim();
+  const sourceSequence = [cleanSourceTitle, String(authorName || '').trim(), ...originalLines].filter(Boolean);
+  const originalParagraphs = markerIndex >= 0 ? paragraphs.slice(markerIndex + 1, markerIndex + 1 + sourceSequence.length) : [];
+  const verifiedSourceEnd = cleanSourceTitle && originalLines.length &&
+    originalParagraphs.length === sourceSequence.length &&
+    originalParagraphs.every((item, index) => item.text === sourceSequence[index])
+      ? originalParagraphs.at(-1).index : Infinity;
 
-  (doc.body?.content || []).forEach((el) => {
+  elements.forEach((el, elementIndex) => {
     if (el.table) {
       const matrix = (el.table.tableRows || []).map((row) =>
         (row.tableCells || []).map((cell) => readStructuralElements(cell.content))
@@ -1207,7 +1220,7 @@ export async function pullBriskFeedbackFromGoogleDoc(accessToken, docId, student
         markerPassed = true;
         return;
       }
-      if (!markerPassed && !studentLines.has(pText)) {
+      if ((!markerPassed && !studentLines.has(pText)) || elementIndex > verifiedSourceEnd) {
         const korH = translateBriskHeader(pText);
         extraBlocks.push(korH || translateBriskTextToKorean(pText));
       }

@@ -52,7 +52,17 @@ test('저장한 목표·기준·피드백 방식과 새 주제 내용을 함께 
   assert.equal(settings.goal, '생생하게 쓰기');
   const prompt = buildFeedbackPrompt({ title: '새 주제', prompt: '오늘의 안내' }, settings);
   for (const part of ['새 주제', '오늘의 안내', '생생하게 쓰기', '순서\n생각과 느낌', '질문 1개']) assert.ok(prompt.includes(part));
+  assert.match(prompt, /제목, 본문, 질문을 모두 한국어로만/);
   assert.equal(normalizeFeedbackCriteria(null).goal, '');
+});
+
+test('기존 묶음 요청문에도 한국어 지시를 추가하고 중복시키지 않는다', async () => {
+  const { ensureKoreanFeedbackPrompt, BRISK_BATCH_FEEDBACK_URL } = await import(helperUrl);
+  const prompt = ensureKoreanFeedbackPrompt('기존에 저장한 평가 기준');
+  assert.match(prompt, /한국어로만/);
+  assert.ok(prompt.includes('기존에 저장한 평가 기준'));
+  assert.equal(ensureKoreanFeedbackPrompt(prompt), prompt);
+  assert.equal(BRISK_BATCH_FEEDBACK_URL, 'https://app.briskteaching.com/batch_feedback');
 });
 
 test('브릭스트 첨삭은 기존 조언을 보존하며 즉시 합치고 중복은 만들지 않는다', async () => {
@@ -224,6 +234,34 @@ test('브릭스트 기준 제목과 잘한 점·고쳐볼 점을 읽기 좋은 �
     '• 고쳐볼 점: 조금 더 구체적으로 써 보세요.'
   ].join('\n'));
   assert.equal(service.translateBriskTextToKorean(formatted), formatted);
+});
+
+test('묶음 문서의 원문 아래에 삽입된 첨삭도 읽되 제목·이름·본문은 가져오지 않는다', async (t) => {
+  const service = await loadGoogleService();
+  const paragraph = (text) => ({ paragraph: { elements: [{ textRun: { content: text + '\n' } }] } });
+  t.mock.method(globalThis, 'fetch', async (url) => new Response(JSON.stringify(String(url).includes('/comments?') ? { comments: [] } : {
+    body: { content: [
+      paragraph('━━━ [학생 작성 본문] ━━━'), paragraph('작품 제목'), paragraph('가학생'),
+      paragraph('  첫 문단'), paragraph(''), paragraph('둘째 문단'),
+      paragraph('잘한 점: 문제를 구체적으로 설명했어요.'), paragraph('고쳐볼 점: 이유를 더 써 보세요.')
+    ] }
+  })));
+  const result = await service.pullBriskFeedbackFromGoogleDoc('token', 'DOC', '  첫 문단\n\n둘째 문단', { strictComments: true, sourceTitle: '작품 제목', authorName: '가학생' });
+  assert.ok(result.pulledNote.includes('문제를 구체적으로'));
+  assert.ok(result.pulledNote.includes('이유를 더 써'));
+  assert.equal(result.pulledNote.includes('작품 제목'), false);
+  assert.equal(result.pulledNote.includes('가학생'), false);
+  assert.equal(result.pulledNote.includes('둘째 문단'), false);
+});
+
+test('원문이 바뀌어 확인할 수 없으면 학생 글을 첨삭으로 오인하지 않는다', async (t) => {
+  const service = await loadGoogleService();
+  const paragraph = (text) => ({ paragraph: { elements: [{ textRun: { content: text + '\n' } }] } });
+  t.mock.method(globalThis, 'fetch', async (url) => new Response(JSON.stringify(String(url).includes('/comments?') ? { comments: [] } : {
+    body: { content: [paragraph('━━━ [학생 작성 본문] ━━━'), paragraph('작품 제목'), paragraph('가학생'), paragraph('알 수 없는 새 본문')] }
+  })));
+  const result = await service.pullBriskFeedbackFromGoogleDoc('token', 'DOC', '기존 본문', { sourceTitle: '작품 제목', authorName: '가학생' });
+  assert.equal(result.pulledNote, '');
 });
 
 function sheetFixture(t, record = submission()) {

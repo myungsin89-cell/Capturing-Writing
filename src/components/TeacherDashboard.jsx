@@ -2039,7 +2039,7 @@ export default function TeacherDashboard({
                     </section>
                   ))}
                 </div>
-                {feedbackTab === 'batch' && <div className="mt-3 border-t border-[#E2E8F0] pt-3 shrink-0 space-y-2"><button type="button" disabled={Boolean(batch.busy) || !batch.chosen.length || !googleAuth?.accessToken} onClick={() => batch.prepare()} className="sketch-btn-primary min-h-11 w-full px-3 py-2 text-sm font-bold disabled:opacity-50">선택한 {batch.chosen.length}명 묶음 준비</button><p className="text-[11px] text-[#64748B]">{batch.busy || (!googleAuth?.accessToken ? '구글 로그인 후 준비할 수 있습니다.' : '제출 대기 학생만 선택할 수 있습니다.')}</p></div>}
+                {feedbackTab === 'batch' && <div className="mt-3 border-t border-[#E2E8F0] pt-3 shrink-0 space-y-2"><button type="button" disabled={Boolean(batch.busy) || !batch.chosen.length || !googleAuth?.accessToken} onClick={() => batch.prepare()} className="sketch-btn-primary min-h-11 w-full px-3 py-2 text-sm font-bold disabled:opacity-50">선택한 {batch.chosen.length}명 폴더 준비</button><p className="text-[11px] text-[#64748B]">{batch.busy || (!googleAuth?.accessToken ? '구글 로그인 후 준비할 수 있습니다.' : '제출 대기 학생만 선택할 수 있습니다.')}</p></div>}
               </>
             );
           })()}
