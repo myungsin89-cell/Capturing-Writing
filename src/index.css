@@ -133,7 +133,21 @@
   line-height: 32px;
 }
 
-/* Student editing and teacher review use the same paper, not grid percentages. */
+/* Share the manuscript width while keeping roster and feedback readable. */
+.notebook-workspace {
+  container-type: inline-size;
+}
+
+.student-notebook-layout,
+.teacher-review-layout {
+  --notebook-width: min(960px, 100cqw);
+  --roster-width: 280px;
+  --feedback-width: 400px;
+  width: 100%;
+  max-width: var(--notebook-width);
+  margin-inline: auto;
+}
+
 .student-notebook-layout,
 .teacher-review-layout,
 .teacher-individual-layout {
@@ -152,7 +166,7 @@
 .notebook-column,
 .notebook-card {
   width: 100%;
-  max-width: 784px;
+  max-width: var(--notebook-width, 960px);
   min-width: 0;
   margin-inline: auto;
 }
@@ -164,7 +178,6 @@
 .manuscript-paper {
   box-sizing: border-box;
   width: 100%;
-  max-width: 730px;
   min-height: 460px;
   margin-inline: auto;
   padding: 24px;
@@ -235,12 +248,14 @@ textarea.manuscript-body {
 }
 
 @media (min-width: 1200px) {
-  .student-notebook-layout {
-    grid-template-columns: 784px minmax(0, 1fr);
+  .student-notebook-layout,
+  .teacher-review-layout {
+    --notebook-width: min(960px, calc(100cqw - 304px));
   }
 
   .teacher-review-layout {
-    grid-template-columns: 200px minmax(0, 1fr);
+    grid-template-columns: var(--roster-width) minmax(0, 1fr);
+    max-width: calc(var(--roster-width) + 24px + var(--notebook-width));
   }
 
   .teacher-student-list {
@@ -250,9 +265,24 @@ textarea.manuscript-body {
   }
 }
 
-@media (min-width: 1440px) {
+/* Only show all three columns when the manuscript can stay comfortably wide. */
+@media (min-width: 1700px) {
+  .student-notebook-layout,
+  .teacher-review-layout {
+    --notebook-width: min(960px, calc(100cqw - 728px));
+  }
+
+  .student-notebook-layout {
+    grid-template-columns: var(--notebook-width) var(--feedback-width);
+    max-width: calc(var(--notebook-width) + 24px + var(--feedback-width));
+  }
+
+  .teacher-review-layout {
+    max-width: calc(var(--roster-width) + var(--notebook-width) + var(--feedback-width) + 48px);
+  }
+
   .teacher-individual-layout {
-    grid-template-columns: 784px minmax(0, 1fr);
+    grid-template-columns: var(--notebook-width) var(--feedback-width);
   }
 }
 

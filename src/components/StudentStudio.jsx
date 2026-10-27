@@ -571,7 +571,7 @@ export default function StudentStudio({
     .filter((p) => p.trim().length > 0).length;
 
   return (
-    <div className="flex-1 w-full px-6 lg:px-10 py-5 flex flex-col gap-4">
+    <div className="notebook-workspace flex-1 w-full px-6 lg:px-10 py-5 flex flex-col gap-4">
       {toastMsg && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-2xl bg-[#1B4332] text-white px-5 py-3 shadow-lg flex items-center gap-2 text-sm font-bold">
           <HandDrawnCheckIcon size={18} color="#52B788" />
@@ -630,7 +630,7 @@ export default function StudentStudio({
 
       {draft.error && !isTeacherPreview && <div role="alert" className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-4 text-sm text-[#991B1B] space-y-3"><p className="font-bold">{draft.error}</p><div className="flex flex-wrap gap-2"><button type="button" onClick={copyCurrentDraft} className="sketch-btn-secondary min-h-11 px-3 py-2 font-bold flex items-center gap-2"><Copy className="h-4 w-4" aria-hidden="true" />지금 글 복사</button><button type="button" onClick={downloadCurrentDraft} className="sketch-btn-secondary min-h-11 px-3 py-2 font-bold flex items-center gap-2"><Download className="h-4 w-4" aria-hidden="true" />글 파일로 보관</button><button type="button" onClick={draft.retry} className="min-h-11 px-3 py-2 font-bold underline cursor-pointer">저장 다시 시도</button></div></div>}
 
-      {/* 교사 확인 화면과 같은 폭의 공책 + 넓어진 피드백 영역 */}
+      {/* 넓어진 공통 원고 + 읽기 편한 폭으로 제한된 피드백 */}
       <div className="student-notebook-layout flex-1">
         <div className="notebook-card sketch-card bg-white flex flex-col justify-between">
           <div className="flex-1 flex flex-col">
@@ -1002,10 +1002,10 @@ export default function StudentStudio({
         {/* 선생님의 다정한 첨삭 & 클릭 시 본문 형광펜 연동 */}
         <div className="sketch-card bg-[#FBFBF9] p-6 sm:p-7 flex flex-col justify-between gap-6">
           <div className="space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-[#CBD5E1]">
+            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-[#CBD5E1]">
               <div className="flex items-center gap-2">
                 <HandDrawnSparkleIcon size={20} color="#1B4332" />
-                <h2 className="text-lg font-bold text-[#1B4332]">
+                <h2 className="text-lg font-bold text-[#1B4332] whitespace-nowrap">
                   선생님의 다정한 첨삭
                 </h2>
               </div>

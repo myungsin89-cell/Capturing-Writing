@@ -1795,7 +1795,7 @@ export default function TeacherDashboard({
       onSelectStudent={setSelectedStudentNumber}
     >
     {(batch) => (
-    <div className="flex-1 w-full px-6 lg:px-10 py-5 flex flex-col gap-5">
+    <div className="notebook-workspace flex-1 w-full px-6 lg:px-10 py-5 flex flex-col gap-5">
       {toastMsg && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 rounded-2xl bg-[#1B4332] text-white px-5 py-3 shadow-lg flex items-center gap-2 text-sm font-bold">
           <HandDrawnCheckIcon size={18} color="#52B788" />
@@ -1876,9 +1876,9 @@ export default function TeacherDashboard({
         onSaved={() => showToast('이 주제의 피드백 기준을 저장했습니다.')}
       />}
 
-      {/* 좁은 명단과 학생 화면과 동일한 규격의 원고 */}
+      {/* 읽기 편한 명단·넓은 공통 원고·폭이 제한된 첨삭 */}
       <div className="teacher-review-layout flex-1">
-        <section aria-label="우리 반 학생 명단" className="teacher-student-list sketch-card bg-white p-3 flex flex-col overflow-hidden">
+        <section aria-label="우리 반 학생 명단" className="teacher-student-list sketch-card bg-white p-4 flex flex-col overflow-hidden">
           {(() => {
             const enrichedList = students.map((rawSt) => {
               const st = getStudentTopicData(rawSt, currentTopic);
