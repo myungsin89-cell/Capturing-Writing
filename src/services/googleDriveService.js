@@ -1533,7 +1533,9 @@ export async function callDirectSheetStudentApi(payload = {}) {
       const existingTopicRecord = topic ? student.historyByTopic?.[topic.id] : null;
       const isStudentLocked = isActive ? student.locked : Boolean(existingTopicRecord?.locked);
       const submissionRecord = isActive ? student : existingTopicRecord || {};
-      if (topic?.classLocked) {
+      const isCompletedRevision =
+        Boolean(payload.allowRevision) && submissionRecord.status === 'FINAL_COMPLETED';
+      if (topic?.classLocked && !isCompletedRevision) {
         return {
           ok: false,
           error: '선생님이 학급 글쓰기를 마감했습니다. 선생님께 문의해 주세요.'

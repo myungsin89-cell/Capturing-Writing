@@ -488,7 +488,8 @@ function submitStageV2(payload) {
   const isStudentLocked = isActive ? student.locked : Boolean(existingTopicRecord && existingTopicRecord.locked);
   const submissionRecord = isActive ? student : (existingTopicRecord || {});
   
-  if (topic.classLocked) {
+  const isCompletedRevision = Boolean(payload.allowRevision) && submissionRecord.status === 'FINAL_COMPLETED';
+  if (topic.classLocked && !isCompletedRevision) {
     return { ok: false, error: '선생님이 학급 글쓰기를 마감했습니다. 선생님께 문의해 주세요.' };
   }
   if (isStudentLocked && !payload.allowRevision && !payload.isRecallUpdate && !submissionRecord.recalled) {

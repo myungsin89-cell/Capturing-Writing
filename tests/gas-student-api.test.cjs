@@ -296,7 +296,7 @@ test('학생은 제출 후 회수(unsubmit)하여 수정하고 다시 제출할 
   assert.equal(resubmit.student.draftHistory[0].text, '오타를 고친 첫 번째 글');
 });
 
-test('완료(FINAL_COMPLETED)된 학생도 추가 작성하여 새 차수로 다시 제출할 수 있다', () => {
+test('전체 마감된 주제에서도 완료(FINAL_COMPLETED) 학생은 새 차수로 다시 제출할 수 있다', () => {
   const { context } = makeHarness();
   const login = context.studentLoginV2({
     spreadsheetId: 'spreadsheet-id-1234567890',
@@ -320,6 +320,7 @@ test('완료(FINAL_COMPLETED)된 학생도 추가 작성하여 새 차수로 다
   const stateContext = context.readAppStateV2_('spreadsheet-id-1234567890');
   stateContext.state.students[0].status = 'FINAL_COMPLETED';
   stateContext.state.students[0].locked = true;
+  stateContext.state.topics[0].classLocked = true;
   context.writeAppStateV2_(stateContext);
 
   // 학생이 완료 후 추가 작성하여 제출 (allowRevision: true)

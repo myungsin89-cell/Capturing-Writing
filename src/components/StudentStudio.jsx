@@ -109,9 +109,11 @@ export default function StudentStudio({
   const topicStudentData = getStudentDataForTopic(selectedTopic);
   const draftPages = getStudentDraftPages(topicStudentData);
   const draftBase = getDraftBase(topicStudentData || {});
-  const canEditDraft = Boolean(topicStudentData) && !isTeacherPreview && !selectedTopic?.classLocked && !isSubmitting &&
+  const canEditCompletedDraft = isFinalWritingStatus(topicStudentData?.status) && isEditingCompleted;
+  const canEditDraft = Boolean(topicStudentData) && !isTeacherPreview &&
+    (!selectedTopic?.classLocked || canEditCompletedDraft) && !isSubmitting &&
     ((!topicStudentData.locked && !isFinalWritingStatus(topicStudentData.status)) || Boolean(topicStudentData.recalled) ||
-      (isFinalWritingStatus(topicStudentData.status) && isEditingCompleted));
+      canEditCompletedDraft);
   const draft = useStudentDraft({
     owner: getDraftOwner({ spreadsheetId: config.spreadsheetId || '', classId: config.activeClassId || '', student: currentStudent, topicId: openedTopicId }),
     base: draftBase, enabled: !isTeacherPreview && Boolean(topicStudentData), editable: canEditDraft,
@@ -495,10 +497,9 @@ export default function StudentStudio({
   const isClassLocked = Boolean(selectedTopic?.classLocked);
   const isFinalCompleted = isFinalWritingStatus(topicStudentData?.status);
   const isTeacherLocked = Boolean(topicStudentData?.locked) && !isRecalled && !(isFinalCompleted && isEditingCompleted);
-  const isLocked = isClassLocked || isTeacherLocked;
   const isReadOnly =
     isTeacherPreview ||
-    isClassLocked ||
+    (isClassLocked && !(isFinalCompleted && isEditingCompleted)) ||
     (isFinalCompleted && !isEditingCompleted) ||
     isTeacherLocked;
   const hasRevision = draftPages.length >= 2;
@@ -729,7 +730,7 @@ export default function StudentStudio({
                     <HandDrawnDiffIcon size={15} color="#FFFFFF" />
                     <span>처음 글과 비교하기</span>
                   </button>
-                  {!isTeacherPreview && !isClassLocked && !isEditingCompleted && (
+                  {!isTeacherPreview && !isEditingCompleted && (
                     <button
                       type="button"
                       onClick={() => {
@@ -870,20 +871,18 @@ export default function StudentStudio({
                     <div>선생님이 최종 완성본으로 확인했어요! 글 쓰느라 정말 수고 많았어요 👏</div>
                   </div>
                 </div>
-                {!isClassLocked && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsEditingCompleted(true);
-                      setViewingPageIdx(null);
-                      setTimeout(() => textareaRef.current?.focus(), 50);
-                    }}
-                    className="sketch-btn-secondary px-5 py-3.5 text-sm font-bold flex items-center gap-2 cursor-pointer hover:bg-[#D8F3DC]"
-                  >
-                    <HandDrawnPencilIcon size={16} color="#1B4332" />
-                    <span>이어서 더 고쳐 쓰기</span>
-                  </button>
-                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsEditingCompleted(true);
+                    setViewingPageIdx(null);
+                    setTimeout(() => textareaRef.current?.focus(), 50);
+                  }}
+                  className="sketch-btn-secondary px-5 py-3.5 text-sm font-bold flex items-center gap-2 cursor-pointer hover:bg-[#D8F3DC]"
+                >
+                  <HandDrawnPencilIcon size={16} color="#1B4332" />
+                  <span>이어서 더 고쳐 쓰기</span>
+                </button>
               </div>
             ) : isTeacherLocked ? (
               <div className="flex items-center gap-3 flex-wrap">
@@ -1093,8 +1092,8 @@ export default function StudentStudio({
       </div>
 
       {/* [처음 쓴 글 · 고쳐 쓴 글 크게 비교하기] 화면 꽉 차는 대형 모달 */}
-      {recoveryData && <DraftRecoveryDialog topicTitle={selectedTopic.title} currentDraft={{ pieceTitle, text: editorText }} items={recoveryData.items} legacy={recoveryData.legacy} canRestore={!isSubmitting && !isTeacherPreview && !isClassLocked && (!isTeacherLocked || isFinalCompleted)} onClose={() => setRecoveryData(null)} onRestore={(snapshot) => {
-        const allowCompleted = isFinalCompleted && !isClassLocked;
+      {recoveryData && <DraftRecoveryDialog topicTitle={selectedTopic.title} currentDraft={{ pieceTitle, text: editorText }} items={recoveryData.items} legacy={recoveryData.legacy} canRestore={!isSubmitting && !isTeacherPreview && ((!isClassLocked && !isTeacherLocked) || isFinalCompleted)} onClose={() => setRecoveryData(null)} onRestore={(snapshot) => {
+        const allowCompleted = isFinalCompleted;
         if (!draft.restore(snapshot, allowCompleted)) return false;
         if (allowCompleted) setIsEditingCompleted(true);
         setHighlightedQuote(''); setShowGreenText(false); setViewingPageIdx(null); setRecoveryData(null);
