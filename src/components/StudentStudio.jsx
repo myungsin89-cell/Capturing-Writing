@@ -58,6 +58,7 @@ export default function StudentStudio({
   const [isQuestionSubmitting, setIsQuestionSubmitting] = useState(false);
   const [isEditingCompleted, setIsEditingCompleted] = useState(false);
   const [isRecalled, setIsRecalled] = useState(false);
+  const [isSubmissionAccepted, setIsSubmissionAccepted] = useState(false);
 
   // null이면 [내 글쓰기 책장] 화면, 값이 있으면 해당 [주제 공책 글쓰기] 화면!
   const [openedTopicId, setOpenedTopicId] = useState(null);
@@ -83,6 +84,10 @@ export default function StudentStudio({
   useEffect(() => {
     setOpenedTopicId(isTeacherPreview && initialTopicId ? initialTopicId : null);
   }, [currentStudent?.classId, currentStudent?.number, currentStudent?.name, isTeacherPreview, initialTopicId]);
+
+  useEffect(() => {
+    setIsSubmissionAccepted(false);
+  }, [openedTopicId]);
 
   // 특정 주제에 대한 이 학생의 글 데이터 가져오기 헬퍼
   const getStudentDataForTopic = (topic) => {
@@ -110,7 +115,7 @@ export default function StudentStudio({
   const draftPages = getStudentDraftPages(topicStudentData);
   const draftBase = getDraftBase(topicStudentData || {});
   const canEditCompletedDraft = isFinalWritingStatus(topicStudentData?.status) && isEditingCompleted;
-  const canEditDraft = Boolean(topicStudentData) && !isTeacherPreview &&
+  const canEditDraft = Boolean(topicStudentData) && !isTeacherPreview && !isSubmissionAccepted &&
     (!selectedTopic?.classLocked || canEditCompletedDraft) && !isSubmitting &&
     ((!topicStudentData.locked && !isFinalWritingStatus(topicStudentData.status)) || Boolean(topicStudentData.recalled) ||
       canEditCompletedDraft);
@@ -146,6 +151,13 @@ export default function StudentStudio({
     setIsRecalled(Boolean(topicStudentData.recalled));
     setRecoveryData(null);
   }, [draft.loadState?.id, topicStudentData?.status, topicStudentData?.recalled]);
+
+  // 재제출 응답이 잠금 상태까지 반영되면 임시 화면 잠금은 서버 상태에 넘깁니다.
+  useEffect(() => {
+    if (topicStudentData?.locked && !topicStudentData?.recalled) {
+      setIsSubmissionAccepted(false);
+    }
+  }, [topicStudentData?.locked, topicStudentData?.recalled]);
 
   const showToast = (msg) => {
     setToastMsg(msg);
@@ -226,6 +238,7 @@ export default function StudentStudio({
       );
       if (result?.ok) {
         draft.submitted(submittedDraft);
+        setIsSubmissionAccepted(true);
         setIsRecalled(false);
         setIsEditingCompleted(false);
         showToast(
@@ -249,6 +262,7 @@ export default function StudentStudio({
     try {
       const res = await onUnsubmitStage(currentStudent.number, selectedTopic.id);
       if (res?.ok) {
+        setIsSubmissionAccepted(false);
         setIsRecalled(true);
         showToast('제출을 회수했습니다. 자유롭게 고친 뒤 다시 제출해 주세요!');
         setTimeout(() => {
@@ -496,7 +510,7 @@ export default function StudentStudio({
   // ============================================================================
   const isClassLocked = Boolean(selectedTopic?.classLocked);
   const isFinalCompleted = isFinalWritingStatus(topicStudentData?.status);
-  const isTeacherLocked = Boolean(topicStudentData?.locked) && !isRecalled && !(isFinalCompleted && isEditingCompleted);
+  const isTeacherLocked = (Boolean(topicStudentData?.locked) || isSubmissionAccepted) && !isRecalled && !(isFinalCompleted && isEditingCompleted);
   const isReadOnly =
     isTeacherPreview ||
     (isClassLocked && !(isFinalCompleted && isEditingCompleted)) ||

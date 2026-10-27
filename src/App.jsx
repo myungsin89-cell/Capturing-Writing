@@ -25,6 +25,7 @@ import {
 import { shouldAutoSaveTeacherState } from './utils/syncPolicy';
 import { getFeedbackTopicRecord, isMatchingSubmission, normalizeFeedbackCriteria, wasBatchFeedbackDelivered } from './utils/batchFeedback';
 import { getUsableDraftHistory, repairLeakedDraftHistory, transitionStudentToNewTopic } from './utils/topicTransition.js';
+import { createStudentRequestGuard } from './utils/studentRequestGuard.js';
 
 const STORAGE_KEYS = {
   GAS_URL: 'sseudam_gas_url_v5',
@@ -207,6 +208,10 @@ export default function App() {
   const [teacherPreviewTopicId, setTeacherPreviewTopicId] = useState('');
   const [teacherOpenedTopicId, setTeacherOpenedTopicId] = useState(null);
   const [teacherSelectedStudentNumber, setTeacherSelectedStudentNumber] = useState('');
+  const studentRequestGuardRef = useRef(null);
+  if (!studentRequestGuardRef.current) {
+    studentRequestGuardRef.current = createStudentRequestGuard();
+  }
 
   const [gasUrl, setGasUrl] = useState(
     () => urlGasUrl || localStorage.getItem(STORAGE_KEYS.GAS_URL) || ''
@@ -819,6 +824,7 @@ export default function App() {
       number: String(data.student.number),
       name: data.student.name
     };
+    studentRequestGuardRef.current.invalidate();
     setStudentSession(nextSession);
     setStudents([data.student]);
     setQuestions(dedupeQuestions(Array.isArray(data.questions) ? data.questions : []));
@@ -829,6 +835,7 @@ export default function App() {
   };
 
   const handleStudentLogout = () => {
+    studentRequestGuardRef.current.invalidate();
     setActiveStudent(null);
     setStudentSession(null);
     setStudents([]);
@@ -841,25 +848,34 @@ export default function App() {
     let cancelled = false;
     let timer = null;
     const refresh = async () => {
+      const scheduleNext = () => {
+        const pollInterval = gasUrl ? 25000 : 50000;
+        if (!cancelled) timer = setTimeout(refresh, pollInterval);
+      };
+      const requestGuard = studentRequestGuardRef.current;
+      if (requestGuard.isMutationPending()) {
+        scheduleNext();
+        return;
+      }
+      const readVersion = requestGuard.beginRead();
       const data = await callGasApi({
         action: 'studentRefresh',
         sessionToken: studentSession.token
       });
-      if (!cancelled && data?.ok && data.student) {
+      if (!cancelled && requestGuard.canApplyRead(readVersion) && data?.ok && data.student) {
         setStudents([data.student]);
         setActiveStudent(data.student);
         setQuestions(dedupeQuestions(Array.isArray(data.questions) ? data.questions : []));
         if (Array.isArray(data.topics)) setTopics(data.topics);
         if (data.config) setConfig((prev) => ({ ...prev, ...data.config }));
-      } else if (!cancelled && data && !data.ok) {
+      } else if (!cancelled && requestGuard.canApplyRead(readVersion) && data && !data.ok) {
         setStudentSession(null);
         setActiveStudent(null);
         setStudents([]);
         setQuestions([]);
       }
       // 직결 모드(gasUrl 미등록)일 때는 시트 API 분당 60회 쿼터를 아끼기 위해 50초, 중계기(GAS)일 때는 25초 간격으로 조회
-      const pollInterval = gasUrl ? 25000 : 50000;
-      if (!cancelled) timer = setTimeout(refresh, pollInterval);
+      scheduleNext();
     };
     refresh();
     return () => {
@@ -909,28 +925,9 @@ export default function App() {
     );
 
     if (isStudentUrlMode) {
-      let data = await callGasApi({
-        action: 'submitStage',
-        sessionToken: studentSession?.token || '',
-        topicId,
-        stage,
-        text,
-        pieceTitle: cleanPieceTitle,
-        isRecallUpdate: Boolean(options.isRecallUpdate),
-        allowRevision: Boolean(options.allowRevision)
-      });
-
-      // 동시 제출 요청 몰림(429 또는 락 대기) 시 2초 대기 후 1회 자동 재시도
-      if (
-        !data?.ok &&
-        data?.error &&
-        (data.error.includes('동시에') ||
-          data.error.includes('많습니다') ||
-          data.error.includes('429') ||
-          data.error.includes('한도'))
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        data = await callGasApi({
+      const finishMutation = studentRequestGuardRef.current.beginMutation();
+      try {
+        let data = await callGasApi({
           action: 'submitStage',
           sessionToken: studentSession?.token || '',
           topicId,
@@ -940,14 +937,38 @@ export default function App() {
           isRecallUpdate: Boolean(options.isRecallUpdate),
           allowRevision: Boolean(options.allowRevision)
         });
-      }
 
-      if (!data?.ok || !data.student) {
-        return { ok: false, error: data?.error || '제출에 실패했습니다. 다시 시도해 주세요.' };
+        // 동시 제출 요청 몰림(429 또는 락 대기) 시 2초 대기 후 1회 자동 재시도
+        if (
+          !data?.ok &&
+          data?.error &&
+          (data.error.includes('동시에') ||
+            data.error.includes('많습니다') ||
+            data.error.includes('429') ||
+            data.error.includes('한도'))
+        ) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+          data = await callGasApi({
+            action: 'submitStage',
+            sessionToken: studentSession?.token || '',
+            topicId,
+            stage,
+            text,
+            pieceTitle: cleanPieceTitle,
+            isRecallUpdate: Boolean(options.isRecallUpdate),
+            allowRevision: Boolean(options.allowRevision)
+          });
+        }
+
+        if (!data?.ok || !data.student) {
+          return { ok: false, error: data?.error || '제출에 실패했습니다. 다시 시도해 주세요.' };
+        }
+        setStudents([data.student]);
+        setActiveStudent(data.student);
+        return { ok: true, student: data.student };
+      } finally {
+        finishMutation();
       }
-      setStudents([data.student]);
-      setActiveStudent(data.student);
-      return { ok: true };
     }
 
     updateLocalStudent();
@@ -959,17 +980,22 @@ export default function App() {
     const isActive = !topicId || topicId === (config.activeTopicId || 'TOPIC_1');
 
     if (isStudentUrlMode) {
-      const data = await callGasApi({
-        action: 'unsubmitStage',
-        sessionToken: studentSession?.token || '',
-        topicId
-      });
-      if (!data?.ok || !data.student) {
-        return { ok: false, error: data?.error || '제출을 회수하지 못했습니다.' };
+      const finishMutation = studentRequestGuardRef.current.beginMutation();
+      try {
+        const data = await callGasApi({
+          action: 'unsubmitStage',
+          sessionToken: studentSession?.token || '',
+          topicId
+        });
+        if (!data?.ok || !data.student) {
+          return { ok: false, error: data?.error || '제출을 회수하지 못했습니다.' };
+        }
+        setStudents([data.student]);
+        setActiveStudent(data.student);
+        return { ok: true, student: data.student };
+      } finally {
+        finishMutation();
       }
-      setStudents([data.student]);
-      setActiveStudent(data.student);
-      return { ok: true };
     }
 
     setStudents((prev) =>
