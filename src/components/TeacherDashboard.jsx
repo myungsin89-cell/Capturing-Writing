@@ -23,6 +23,7 @@ import {
   isFinalWritingStatus,
   isSubmittedWritingStatus
 } from '../utils/diffHelper';
+import { questionBelongsToTopic } from '../utils/questionHelper';
 import { translateBriskTextToKorean } from '../services/googleDriveService';
 import {
   ExternalLink,
@@ -1763,7 +1764,7 @@ export default function TeacherDashboard({
   const studentQuestions = questions.filter(
     (q) =>
       String(q.number) === String(selectedStudent?.number) &&
-      (!currentTopic?.id || !q.topicId || q.topicId === currentTopic.id)
+      questionBelongsToTopic(q, currentTopic?.id)
   );
   const unresolvedQuestions = studentQuestions.filter(
     (q) => !q.resolved && q.resolved !== 'TRUE'
@@ -1885,6 +1886,7 @@ export default function TeacherDashboard({
               const unresolvedCount = questions.filter(
                 (q) =>
                   String(q.number) === String(st.number) &&
+                  questionBelongsToTopic(q, currentTopic?.id) &&
                   !q.resolved &&
                   q.resolved !== 'TRUE'
               ).length;
@@ -2184,7 +2186,7 @@ export default function TeacherDashboard({
 
             {/* [미답변 질문] 답변 대기 중인 질문만 노란 카드로 표시! 답변 완료하면 즉시 사라져 자리를 차지하지 않음 */}
             {unresolvedQuestions.length > 0 && (
-              <div className="sketch-card bg-[#FFFBEB] border-[#F59E0B] p-4 space-y-3">
+              <div className="order-first sketch-card bg-[#FFFBEB] border-[#F59E0B] p-4 space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-1.5 text-xs font-bold text-[#92400E]">
                     <HandDrawnChatIcon size={15} color="#92400E" />
