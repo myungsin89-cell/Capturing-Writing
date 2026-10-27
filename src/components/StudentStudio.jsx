@@ -147,6 +147,26 @@ export default function StudentStudio({
   const feedbackItems = activeFeedbackPage?.feedbackItems || [];
   const feedbackTeacherNote = activeFeedbackPage?.teacherNote || '';
 
+  // Grow the editor instead of letting a scrollbar narrow the writing surface.
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const resize = () => {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${textarea.scrollHeight}px`;
+    };
+    let active = true;
+    resize();
+    document.fonts?.ready.then(() => { if (active) resize(); });
+    document.fonts?.addEventListener('loadingdone', resize);
+    window.addEventListener('resize', resize);
+    return () => {
+      active = false;
+      document.fonts?.removeEventListener('loadingdone', resize);
+      window.removeEventListener('resize', resize);
+    };
+  }, [editorText, openedTopicId, viewingPageIdx, highlightedQuote, showGreenText]);
+
   const currentWritingStage = Math.max(1, draftPages.length + 1);
 
   // 제출본/공책이 바뀔 때만 보기 상태를 초기화합니다. 입력 내용은 전용 저장 훅에서 복원합니다.
@@ -610,10 +630,9 @@ export default function StudentStudio({
 
       {draft.error && !isTeacherPreview && <div role="alert" className="rounded-2xl border border-[#FCA5A5] bg-[#FEF2F2] p-4 text-sm text-[#991B1B] space-y-3"><p className="font-bold">{draft.error}</p><div className="flex flex-wrap gap-2"><button type="button" onClick={copyCurrentDraft} className="sketch-btn-secondary min-h-11 px-3 py-2 font-bold flex items-center gap-2"><Copy className="h-4 w-4" aria-hidden="true" />지금 글 복사</button><button type="button" onClick={downloadCurrentDraft} className="sketch-btn-secondary min-h-11 px-3 py-2 font-bold flex items-center gap-2"><Download className="h-4 w-4" aria-hidden="true" />글 파일로 보관</button><button type="button" onClick={draft.retry} className="min-h-11 px-3 py-2 font-bold underline cursor-pointer">저장 다시 시도</button></div></div>}
 
-      {/* 메인 와이드 2단 영역 (왼쪽 8칸: 내 원고지 / 오른쪽 4칸: 선생님 첨삭) */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 items-stretch">
-        {/* 왼쪽 (8칸 - 시원하고 넓은 원고지 책상 + 다회차 페이지 넘김 + 초록 글씨 비교) */}
-        <div className="lg:col-span-7 xl:col-span-8 sketch-card bg-white p-6 sm:p-8 flex flex-col justify-between">
+      {/* 교사 확인 화면과 같은 폭의 공책 + 넓어진 피드백 영역 */}
+      <div className="student-notebook-layout flex-1">
+        <div className="notebook-card sketch-card bg-white flex flex-col justify-between">
           <div className="flex-1 flex flex-col">
             <div className="flex items-center justify-between gap-2 pb-3 mb-3 border-b border-[#E2E8F0] flex-wrap">
               {/* 왼쪽: 내가 쓰는 글 + 문단·글자수 + [고친 표현 초록 글씨로 보기] 버튼 */}
@@ -807,9 +826,9 @@ export default function StudentStudio({
             </div>
 
             <div
-              className={`flex-1 min-h-[460px] w-full lined-paper p-5 sm:p-6 rounded-2xl border font-editorial-serif text-[#1E293B] ${
+              className={`manuscript-paper flex-1 lined-paper rounded-2xl border text-[#1E293B] ${
                 highlightedQuote || showGreenText || viewingPageIdx !== null
-                  ? 'border-2 border-[#52B788]'
+                  ? 'border-[#52B788] ring-1 ring-[#52B788]'
                   : 'border-[#CBD5E1] focus-within:border-[#1B4332]'
               }`}
             >
@@ -822,11 +841,11 @@ export default function StudentStudio({
                   aria-label="작품 제목"
                   disabled={isSubmitting}
                   placeholder="제목을 써주세요"
-                  className="w-full bg-transparent border-0 border-b border-dashed border-[#94A3B8] px-2 pb-2 text-center text-xl sm:text-2xl font-bold font-editorial-serif text-[#1E293B] placeholder:text-[#94A3B8]/70 placeholder:font-normal focus:outline-none focus:border-[#1B4332]"
+                  className="manuscript-title bg-transparent border-0 border-b border-dashed border-[#94A3B8] text-[#1E293B] placeholder:text-[#94A3B8]/70 placeholder:font-normal focus:outline-none focus:border-[#1B4332]"
                 />
               ) : (
                 <h3
-                  className={`px-2 pb-2 text-center text-xl sm:text-2xl font-editorial-serif ${
+                  className={`manuscript-title ${
                     displayPieceTitle
                       ? 'font-bold text-[#1E293B]'
                       : 'font-normal text-[#94A3B8]/70'
@@ -835,7 +854,7 @@ export default function StudentStudio({
                   {displayPieceTitle || '제목을 써주세요'}
                 </h3>
               )}
-              <div className="mt-3 mb-8 pr-[10%] text-right text-lg sm:text-[19.5px] leading-8 font-semibold text-[#475569]">
+              <div className="manuscript-name text-[#475569]">
                 {currentStudent.name}
               </div>
 
@@ -848,7 +867,7 @@ export default function StudentStudio({
                       setViewingPageIdx(null);
                     }
                   }}
-                  className="min-h-[330px] text-lg sm:text-[19.5px] whitespace-pre-wrap leading-8 cursor-text"
+                  className="cursor-text"
                 >
                   <div className="mb-3 flex items-center justify-between bg-[#F2F9F5] border border-[#B7E4C7] px-3.5 py-2 rounded-xl text-xs font-bold text-[#1B4332]">
                     <span>
@@ -860,13 +879,15 @@ export default function StudentStudio({
                       {!isReadOnly ? ' (공책을 클릭하면 바로 이어서 고쳐 쓸 수 있어요)' : ''}
                     </span>
                   </div>
-                  {showGreenText
-                    ? renderTextWithGreenAdditions(
-                        prevComparisonText,
-                        activeDisplayText,
-                        highlightedQuote
-                      )
-                    : renderTextWithHighlight(activeDisplayText, highlightedQuote)}
+                  <div className="manuscript-body">
+                    {showGreenText
+                      ? renderTextWithGreenAdditions(
+                          prevComparisonText,
+                          activeDisplayText,
+                          highlightedQuote
+                        )
+                      : renderTextWithHighlight(activeDisplayText, highlightedQuote)}
+                  </div>
                 </div>
               ) : (
                 <textarea
@@ -875,7 +896,7 @@ export default function StudentStudio({
                   onChange={(e) => setEditorText(e.target.value)}
                   disabled={isReadOnly || isSubmitting}
                   placeholder="여기에 글을 시작해 주세요."
-                  className="min-h-[330px] w-full bg-transparent border-0 p-0 focus:outline-none font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] resize-none leading-8 whitespace-pre-wrap disabled:opacity-75 disabled:cursor-not-allowed"
+                  className="manuscript-body bg-transparent focus:outline-none text-[#1E293B] disabled:opacity-100 disabled:cursor-not-allowed"
                 />
               )}
             </div>
@@ -978,8 +999,8 @@ export default function StudentStudio({
           </div>
         </div>
 
-        {/* 오른쪽 (4칸 - 선생님의 다정한 첨삭 & 클릭 시 본문 형광펜 연동) */}
-        <div className="lg:col-span-5 xl:col-span-4 sketch-card bg-[#FBFBF9] p-6 sm:p-7 flex flex-col justify-between gap-6">
+        {/* 선생님의 다정한 첨삭 & 클릭 시 본문 형광펜 연동 */}
+        <div className="sketch-card bg-[#FBFBF9] p-6 sm:p-7 flex flex-col justify-between gap-6">
           <div className="space-y-4">
             <div className="flex items-center justify-between pb-3 border-b border-[#CBD5E1]">
               <div className="flex items-center gap-2">

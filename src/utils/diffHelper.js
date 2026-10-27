@@ -106,7 +106,7 @@ export function renderTextWithHighlight(text = '', highlightedQuote = '') {
             key: `hl_${index}`,
             id: index === 0 ? 'active-highlight-quote' : undefined,
             className:
-              'bg-[#FEF08A] text-[#1E293B] font-bold px-1.5 py-0.5 rounded-md border-b-2 border-[#F59E0B] shadow-2xs transition-all duration-300'
+              'manuscript-highlight bg-[#FEF08A] text-[#1E293B]'
           },
           cleanQuote
         )
@@ -117,7 +117,7 @@ export function renderTextWithHighlight(text = '', highlightedQuote = '') {
 /**
  * [초록 글씨 비교 헬퍼]
  * 녹색 배경 박스 없이, 완성본 문단 그대로 보여주되 이전 차수 대비 새로 추가·수정한 표현만
- * 깔끔한 초록색 글씨(text-[#15803D] font-bold)로 표시합니다.
+ * 글자 폭을 바꾸지 않는 초록색 글씨로 표시합니다.
  */
 export function renderTextWithGreenAdditions(
   prevText = '',
@@ -144,7 +144,7 @@ export function renderTextWithGreenAdditions(
             'span',
             {
               key: idx,
-              className: 'text-[#15803D] font-bold'
+              className: 'text-[#15803D]'
             },
             tok.value
           )

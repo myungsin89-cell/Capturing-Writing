@@ -1876,10 +1876,9 @@ export default function TeacherDashboard({
         onSaved={() => showToast('이 주제의 피드백 기준을 저장했습니다.')}
       />}
 
-      {/* 2. 3단 와이드 데스크톱 워크스페이스 (좌측 명단 3 : 가운데 학생 글 5 : 우측 첨삭 패널 4) */}
-      <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        {/* [좌측 3칸] 우리 반 학생 명단 사이드바 (26명 이상이어도 독립 스크롤 고정 + 질문·첨삭 대기 상단 배치) */}
-        <section aria-label="우리 반 학생 명단" className="lg:col-span-3 sketch-card bg-white p-4 flex flex-col max-h-[520px] lg:max-h-[calc(100dvh-165px)] lg:sticky lg:top-20 overflow-hidden">
+      {/* 좁은 명단과 학생 화면과 동일한 규격의 원고 */}
+      <div className="teacher-review-layout flex-1">
+        <section aria-label="우리 반 학생 명단" className="teacher-student-list sketch-card bg-white p-3 flex flex-col overflow-hidden">
           {(() => {
             const enrichedList = students.map((rawSt) => {
               const st = getStudentTopicData(rawSt, currentTopic);
@@ -1981,7 +1980,7 @@ export default function TeacherDashboard({
 
             return (
               <>
-                <div className="flex items-center justify-between gap-2 pb-3 mb-2 border-b border-[#E2E8F0] shrink-0">
+                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 mb-2 border-b border-[#E2E8F0] shrink-0">
                   <h2 className="text-sm sm:text-base font-bold text-[#1B4332] whitespace-nowrap">
                     우리 반 학생 ({students.length}명)
                   </h2>
@@ -2034,16 +2033,16 @@ export default function TeacherDashboard({
           })()}
         </section>
 
-        <div className="lg:col-span-9" id="feedback-panel-batch" role="tabpanel" aria-labelledby="feedback-tab-batch" hidden={feedbackTab !== 'batch'}>
+        <div id="feedback-panel-batch" role="tabpanel" aria-labelledby="feedback-tab-batch" hidden={feedbackTab !== 'batch'}>
           <BatchFeedbackPanel model={batch} />
         </div>
 
-        <div className="lg:col-span-9" id="feedback-panel-individual" role="tabpanel" aria-labelledby="feedback-tab-individual" hidden={feedbackTab !== 'individual'}>
-        <div className="grid grid-cols-1 lg:grid-cols-9 gap-6 items-start">
-        {/* [가운데 5칸] 선택한 학생의 글 (완성본 기본 표시 + 다회차 페이지 넘김 + 초록 글씨 토글) */}
+        <div id="feedback-panel-individual" role="tabpanel" aria-labelledby="feedback-tab-individual" hidden={feedbackTab !== 'individual'}>
+        <div className="teacher-individual-layout">
+        {/* 학생 공책과 같은 폭의 원고 */}
         {selectedStudent && (
-          <div className="lg:col-span-5 flex flex-col gap-4">
-            <div className="flex-1 sketch-card bg-white p-6 flex flex-col">
+          <div className="notebook-column flex flex-col gap-4">
+            <div className="notebook-card flex-1 sketch-card bg-white flex flex-col">
               <div className="flex items-center justify-between gap-2 pb-3 mb-3 border-b border-[#E2E8F0] flex-wrap">
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="px-2.5 py-1 rounded-lg bg-[#1B4332] text-white text-xs font-bold">
@@ -2149,7 +2148,7 @@ export default function TeacherDashboard({
                 )}
               </div>
 
-              {/* 학생 공책과 100% 동일한 글씨 크기(19.5px)로 시원하게 표시 */}
+              {/* 입력·제출·교사 확인에 공통 원고 규격 적용 */}
               <div
                 onMouseUp={() => {
                   const sel = window.getSelection()?.toString().trim();
@@ -2158,29 +2157,29 @@ export default function TeacherDashboard({
                     setHighlightedQuote(sel);
                   }
                 }}
-                className="flex-1 min-h-[420px] lined-paper p-5 sm:p-6 rounded-2xl border border-[#CBD5E1] font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] whitespace-pre-wrap leading-8 select-text cursor-text"
+                className="manuscript-paper flex-1 lined-paper rounded-2xl border border-[#CBD5E1] text-[#1E293B] select-text cursor-text"
               >
-                <div className="mb-8">
-                  <h3 className="text-center text-xl sm:text-2xl font-bold text-[#1E293B]">
-                    {selectedStudent.pieceTitle || currentTopic.title}
-                  </h3>
-                  <div className="mt-3 text-right text-sm sm:text-base font-semibold text-[#475569]">
-                    {selectedStudent.name}
-                  </div>
+                <h3 className="manuscript-title text-[#1E293B]">
+                  {selectedStudent.pieceTitle || currentTopic.title}
+                </h3>
+                <div className="manuscript-name text-[#475569]">
+                  {selectedStudent.name}
                 </div>
-                {currentStudentText ? (
-                  showGreenText && prevDraftPage ? (
-                    renderTextWithGreenAdditions(
-                      prevDraftPage.text,
-                      currentStudentText,
-                      highlightedQuote
+                <div className="manuscript-body">
+                  {currentStudentText ? (
+                    showGreenText && prevDraftPage ? (
+                      renderTextWithGreenAdditions(
+                        prevDraftPage.text,
+                        currentStudentText,
+                        highlightedQuote
+                      )
+                    ) : (
+                      renderTextWithHighlight(currentStudentText, highlightedQuote)
                     )
                   ) : (
-                    renderTextWithHighlight(currentStudentText, highlightedQuote)
-                  )
-                ) : (
-                  <span className="text-[#94A3B8]">아직 제출된 글이 없습니다.</span>
-                )}
+                    <span className="text-[#94A3B8]">아직 제출된 글이 없습니다.</span>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -2348,11 +2347,11 @@ export default function TeacherDashboard({
           </div>
         )}
 
-        {/* [우측 4칸] 큰 칸의 종합 첨삭 노트 기본 + 문장 드래그 시에만 나타나는 부분 첨삭 */}
+        {/* 종합 첨삭 노트 + 문장 드래그 시 부분 첨삭 */}
         {selectedStudent && (
           <form
             onSubmit={handleConfirmFeedbackDone}
-            className="lg:col-span-4 sketch-card bg-[#FBFBF9] p-6 flex flex-col justify-between gap-5"
+            className="sketch-card bg-[#FBFBF9] p-6 flex flex-col justify-between gap-5"
           >
             <div className="space-y-4 flex-1 flex flex-col">
               <div className="border-b border-[#E2E8F0] pb-4 space-y-2.5">
