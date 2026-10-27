@@ -25,6 +25,7 @@ import {
 } from '../utils/diffHelper';
 import { questionBelongsToTopic } from '../utils/questionHelper';
 import { groupTeacherRoster } from '../utils/teacherRoster';
+import { isClosedBookletTopic } from '../utils/bookletData';
 import { translateBriskTextToKorean } from '../services/googleDriveService';
 import {
   ExternalLink,
@@ -48,7 +49,8 @@ import {
   Users,
   QrCode,
   UserPlus,
-  LogOut
+  LogOut,
+  Download
 } from 'lucide-react';
 
 const DEFAULT_BRISK_PROMPT =
@@ -181,6 +183,9 @@ export default function TeacherDashboard({
   const [criteriaCopyFailed, setCriteriaCopyFailed] = useState(false);
   const [isCriteriaDialogOpen, setIsCriteriaDialogOpen] = useState(false);
   const [feedbackTab, setFeedbackTab] = useState('individual');
+  const [BookletDialog, setBookletDialog] = useState(null);
+  const [bookletRequest, setBookletRequest] = useState(null);
+  const [isLoadingBooklet, setIsLoadingBooklet] = useState(false);
   const [docSyncStatus, setDocSyncStatus] = useState('idle');
   const docPullingRef = useRef(false);
   const docContextRef = useRef(null);
@@ -289,6 +294,26 @@ export default function TeacherDashboard({
     setToastMsg(msg);
     setTimeout(() => setToastMsg(''), 3200);
   };
+
+  const openBooklet = async (topic = null) => {
+    if (isLoadingBooklet) return;
+    setIsLoadingBooklet(true);
+    try {
+      const { default: Dialog } = await import('./BookletDialog');
+      setBookletDialog(() => Dialog);
+      setBookletRequest({
+        classId: config.activeClassId,
+        initialTopicIds: topic ? [String(topic.id)] : undefined,
+        title: (topic?.title || config.className || '우리 반') + ' 글모음'
+      });
+    } catch { showToast('문집 기능을 불러오지 못했습니다. 새로고침 후 다시 시도해 주세요.'); }
+    finally { setIsLoadingBooklet(false); }
+  };
+  const renderBookletDialog = () => BookletDialog && bookletRequest && bookletRequest.classId === config.activeClassId && (
+    <BookletDialog key={bookletRequest.classId} topics={topics} students={students} config={config}
+      initialTopicIds={bookletRequest.initialTopicIds} initialTitle={bookletRequest.title}
+      onClose={() => setBookletRequest(null)} />
+  );
 
   // [핵심] 구글 독스에서 Brisk로 넣은 첨삭(표/문단/댓글)을 자동으로 읽어와 채워주는 함수
   const handlePullFromDoc = async () => {
@@ -1269,6 +1294,9 @@ export default function TeacherDashboard({
           </div>
 
           <div className="flex items-center gap-2 shrink-0 flex-wrap">
+            <button type="button" onClick={() => openBooklet()} disabled={isLoadingBooklet || !topics.some(isClosedBookletTopic)} title="마감한 주제들을 골라 문집 PDF로 만듭니다" className="sketch-btn-secondary px-4 py-2.5 text-xs sm:text-sm font-bold flex items-center gap-1.5 disabled:opacity-40">
+              <Download className="w-4 h-4" /><span>{isLoadingBooklet ? '문집 준비 중...' : '문집 만들기'}</span>
+            </button>
             <button
               type="button"
               onClick={onOpenGasSetup}
@@ -1755,6 +1783,7 @@ export default function TeacherDashboard({
         />
 
         {renderDeleteConfirmModal()}
+        {renderBookletDialog()}
       </div>
     );
   }
@@ -1829,6 +1858,7 @@ export default function TeacherDashboard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          {isClosedBookletTopic(currentTopic) && <button type="button" onClick={() => openBooklet(currentTopic)} disabled={isLoadingBooklet} className="sketch-btn-secondary h-11 px-3.5 text-xs sm:text-sm font-bold flex items-center gap-1.5 disabled:opacity-40"><Download className="w-4 h-4" /><span>{isLoadingBooklet ? '문집 준비 중...' : '주제 문집 PDF'}</span></button>}
           <button
             type="button"
             onClick={() => setIsShareModalOpen(true)}
@@ -1870,6 +1900,7 @@ export default function TeacherDashboard({
         </div>
       </div>
 
+      {renderBookletDialog()}
       {isCriteriaDialogOpen && <FeedbackCriteriaDialog
         key={currentTopic.id} topic={currentTopic} topics={allTopics}
         onSave={onSaveFeedbackCriteria}
