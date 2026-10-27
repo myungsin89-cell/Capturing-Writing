@@ -379,6 +379,49 @@ test('전체 마감된 주제에서도 완료(FINAL_COMPLETED) 학생은 새 차
   assert.equal(revised.student.draftHistory[1].text, '완료 후 더 다듬은 2차 글');
 });
 
+test('완료 학생이 혼자 수정해 저장하면 FINAL_COMPLETED 상태를 유지한다', () => {
+  const { context } = makeHarness();
+  const login = context.studentLoginV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    classId: 'CLASS_A',
+    accessKey: 'class-secret',
+    number: '1',
+    name: '가학생'
+  });
+
+  context.submitStageV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    sessionToken: login.sessionToken,
+    topicId: 'TOPIC_A',
+    stage: 1,
+    pieceTitle: '완성할 글',
+    text: '1차 완성 글'
+  });
+
+  const stateContext = context.readAppStateV2_('spreadsheet-id-1234567890');
+  stateContext.state.students[0].status = 'FINAL_COMPLETED';
+  stateContext.state.students[0].locked = true;
+  stateContext.state.topics[0].classLocked = true;
+  context.writeAppStateV2_(stateContext);
+
+  const selfSaved = context.submitStageV2({
+    spreadsheetId: 'spreadsheet-id-1234567890',
+    sessionToken: login.sessionToken,
+    topicId: 'TOPIC_A',
+    stage: 2,
+    pieceTitle: '완성할 글 (직접 수정)',
+    text: '학생이 혼자 더 다듬은 글',
+    allowRevision: true,
+    keepFinalCompleted: true
+  });
+
+  assert.equal(selfSaved.ok, true);
+  assert.equal(selfSaved.student.status, 'FINAL_COMPLETED');
+  assert.equal(selfSaved.student.locked, true);
+  assert.equal(selfSaved.student.draftHistory.length, 2);
+  assert.equal(selfSaved.student.draftHistory[1].text, '학생이 혼자 더 다듬은 글');
+});
+
 test('작품 제목이 없는 학생 글은 제출하지 않는다', () => {
   const { context } = makeHarness();
   const login = context.studentLoginV2({

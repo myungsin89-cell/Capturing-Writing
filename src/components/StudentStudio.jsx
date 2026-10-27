@@ -211,7 +211,7 @@ export default function StudentStudio({
     }, 20);
   };
 
-  const handleStageSubmit = async () => {
+  const handleStageSubmit = async (requestFeedback = false) => {
     if (isTeacherPreview) return;
     if (!pieceTitle.trim()) {
       showToast('작품 제목을 먼저 지어 주세요.');
@@ -222,11 +222,15 @@ export default function StudentStudio({
       return;
     }
     const submittedDraft = draft.captureSubmission();
+    const wasRecalled = isRecalled;
+    const wasEditingCompleted = isEditingCompleted;
+    const isFeedbackRequest = wasEditingCompleted && requestFeedback;
     setIsSubmitting(true);
     try {
       const options = {
-        isRecallUpdate: isRecalled,
-        allowRevision: isEditingCompleted
+        isRecallUpdate: wasRecalled,
+        allowRevision: wasEditingCompleted,
+        keepFinalCompleted: wasEditingCompleted && !isFeedbackRequest
       };
       const result = await onSubmitStage(
         currentStudent.number,
@@ -242,10 +246,12 @@ export default function StudentStudio({
         setIsRecalled(false);
         setIsEditingCompleted(false);
         showToast(
-          isRecalled
+          wasRecalled
             ? '수정한 글을 다시 선생님께 제출했어요!'
-            : isEditingCompleted
-            ? '새로 다듬은 글을 선생님께 제출했어요!'
+            : isFeedbackRequest
+            ? '선생님께 첨삭을 요청했어요!'
+            : wasEditingCompleted
+            ? '수정한 글을 최종 완성본에 저장했어요!'
             : '선생님께 내 글을 제출했어요!'
         );
       } else {
@@ -766,7 +772,7 @@ export default function StudentStudio({
               <div className="mb-3 px-4 py-3 rounded-2xl bg-[#FEF9C3] border border-[#FACC15] text-xs sm:text-sm font-bold text-[#854D0E] flex items-center justify-between gap-3 flex-wrap">
                 <div className="flex items-center gap-2">
                   <HandDrawnPencilIcon size={16} color="#854D0E" />
-                  <span>선생님이 완성해 주신 글을 바탕으로 더 다듬고 있어요. 작성을 마친 후 아래 [다시 제출하기]를 눌러주세요.</span>
+                  <span>완성본을 자유롭게 더 다듬고 있어요. 저장만 하면 선생님께 첨삭을 요청하지 않아요.</span>
                 </div>
                 <button
                   type="button"
@@ -920,10 +926,31 @@ export default function StudentStudio({
                   </button>
                 )}
               </div>
+            ) : isEditingCompleted ? (
+              <div className="w-full sm:w-auto flex flex-col sm:flex-row gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleStageSubmit(false)}
+                  disabled={isSubmitting}
+                  className="w-full sm:w-auto min-w-[240px] h-14 px-7 sketch-btn-primary text-base font-bold flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <HandDrawnCheckIcon size={20} color="#FFFFFF" />
+                  <span>{isSubmitting ? '안전하게 저장하고 있어요...' : '수정한 내용 저장하기'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleStageSubmit(true)}
+                  disabled={isSubmitting}
+                  className="w-full sm:w-auto min-w-[220px] h-14 px-6 sketch-btn-secondary text-base font-bold flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <HandDrawnPencilIcon size={18} color="#1B4332" />
+                  <span>{isSubmitting ? '처리하고 있어요...' : '선생님에게 첨삭 요청'}</span>
+                </button>
+              </div>
             ) : (
               <button
                 type="button"
-                onClick={handleStageSubmit}
+                onClick={() => handleStageSubmit(false)}
                 disabled={isSubmitting}
                 className="w-full sm:w-auto min-w-[260px] h-14 px-8 sketch-btn-primary text-base font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
@@ -933,8 +960,6 @@ export default function StudentStudio({
                     ? '안전하게 제출하고 있어요...'
                     : isRecalled
                     ? '수정 완료! 다시 제출하기'
-                    : isEditingCompleted
-                    ? '더 다듬었어요! 다시 제출하기'
                     : currentWritingStage === 1
                     ? '다 썼어요! 선생님께 제출하기'
                     : `${currentWritingStage}차 수정 완료! 다시 제출하기`}

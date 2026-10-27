@@ -447,7 +447,11 @@ function appendDraftRevisionV2_(record, text, pieceTitle, updatedAt, updatedAtIs
   }
   var round = history.length + 1;
   var nextRecord = Object.assign({}, record, {
-    status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
+    status: options.keepFinalCompleted
+      ? 'FINAL_COMPLETED'
+      : round === 1
+      ? 'STAGE_1_SUBMITTED'
+      : 'REVISION_SUBMITTED',
     locked: true,
     pieceTitle: pieceTitle,
     teacherNote: '',
@@ -516,7 +520,10 @@ function submitStageV2(payload) {
     pieceTitle,
     now,
     nowIso,
-    { isRecallUpdate: Boolean(payload.isRecallUpdate || submissionRecord.recalled) }
+    {
+      isRecallUpdate: Boolean(payload.isRecallUpdate || submissionRecord.recalled),
+      keepFinalCompleted: isCompletedRevision && Boolean(payload.keepFinalCompleted)
+    }
   );
   if (isActive) {
     Object.keys(submittedRecord).forEach(function(key) {

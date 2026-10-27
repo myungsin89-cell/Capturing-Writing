@@ -732,7 +732,11 @@ function appendStoredDraftRevision(record = {}, text, pieceTitle, updatedAt, upd
   const round = history.length + 1;
   const nextRecord = {
     ...record,
-    status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
+    status: options.keepFinalCompleted
+      ? 'FINAL_COMPLETED'
+      : round === 1
+      ? 'STAGE_1_SUBMITTED'
+      : 'REVISION_SUBMITTED',
     locked: true,
     pieceTitle,
     teacherNote: '',
@@ -1612,7 +1616,10 @@ export async function callDirectSheetStudentApi(payload = {}) {
         pieceTitle,
         `오늘 ${now}`,
         nowIso,
-        { isRecallUpdate }
+        {
+          isRecallUpdate,
+          keepFinalCompleted: isCompletedRevision && Boolean(payload.keepFinalCompleted)
+        }
       );
 
       if (isActive) {

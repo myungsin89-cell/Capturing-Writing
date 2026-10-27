@@ -158,7 +158,11 @@ function appendDraftRevision(record = {}, text, pieceTitle, updatedAt, updatedAt
   const round = history.length + 1;
   const nextRecord = {
     ...record,
-    status: round === 1 ? 'STAGE_1_SUBMITTED' : 'REVISION_SUBMITTED',
+    status: options.keepFinalCompleted
+      ? 'FINAL_COMPLETED'
+      : round === 1
+      ? 'STAGE_1_SUBMITTED'
+      : 'REVISION_SUBMITTED',
     locked: true,
     pieceTitle,
     teacherNote: '',
@@ -938,7 +942,8 @@ export default function App() {
           text,
           pieceTitle: cleanPieceTitle,
           isRecallUpdate: Boolean(options.isRecallUpdate),
-          allowRevision: Boolean(options.allowRevision)
+          allowRevision: Boolean(options.allowRevision),
+          keepFinalCompleted: Boolean(options.keepFinalCompleted)
         });
 
         // 동시 제출 요청 몰림(429 또는 락 대기) 시 2초 대기 후 1회 자동 재시도
@@ -959,7 +964,8 @@ export default function App() {
             text,
             pieceTitle: cleanPieceTitle,
             isRecallUpdate: Boolean(options.isRecallUpdate),
-            allowRevision: Boolean(options.allowRevision)
+            allowRevision: Boolean(options.allowRevision),
+            keepFinalCompleted: Boolean(options.keepFinalCompleted)
           });
         }
 

@@ -136,7 +136,7 @@ test('시트 직결 학생 API에서도 제출 회수 후 같은 차수로 다�
   assert.equal(resubmitted.student.draftHistory[0].text, '오타를 고친 글');
 });
 
-test('시트 직결 학생 API에서도 전체 마감 후 최종 완성본을 더 다듬어 제출한다', async (t) => {
+test('시트 직결 학생 API에서도 완성본 저장과 첨삭 요청을 구분한다', async (t) => {
   const service = await loadGoogleService();
   const spreadsheetId = 'SHEET_ID_12345678901234567890';
   let state = {
@@ -181,13 +181,23 @@ test('시트 직결 학생 API에서도 전체 마감 후 최종 완성본을 �
   const sessionToken = Buffer.from(encodeURIComponent(JSON.stringify({
     spreadsheetId, classId: 'CLASS_A', accessKey: 'class-secret', number: '1', name: '가학생'
   }))).toString('base64');
-  const revised = await service.callDirectSheetStudentApi({
+  const selfSaved = await service.callDirectSheetStudentApi({
     action: 'submitStage', spreadsheetId, sessionToken, topicId: 'TOPIC_A', stage: 2,
-    pieceTitle: '완성한 글 (더 다듬음)', text: '완성 후 더 다듬은 글', allowRevision: true
+    pieceTitle: '완성한 글 (더 다듬음)', text: '완성 후 더 다듬은 글', allowRevision: true,
+    keepFinalCompleted: true
   });
 
-  assert.equal(revised.ok, true);
-  assert.equal(revised.student.status, 'REVISION_SUBMITTED');
-  assert.equal(revised.student.draftHistory.length, 2);
-  assert.equal(revised.student.draftHistory[1].text, '완성 후 더 다듬은 글');
+  assert.equal(selfSaved.ok, true);
+  assert.equal(selfSaved.student.status, 'FINAL_COMPLETED');
+  assert.equal(selfSaved.student.draftHistory.length, 2);
+  assert.equal(selfSaved.student.draftHistory[1].text, '완성 후 더 다듬은 글');
+
+  const feedbackRequested = await service.callDirectSheetStudentApi({
+    action: 'submitStage', spreadsheetId, sessionToken, topicId: 'TOPIC_A', stage: 3,
+    pieceTitle: '완성한 글 (첨삭 요청)', text: '한 번 더 다듬은 글', allowRevision: true
+  });
+
+  assert.equal(feedbackRequested.ok, true);
+  assert.equal(feedbackRequested.student.status, 'REVISION_SUBMITTED');
+  assert.equal(feedbackRequested.student.draftHistory.length, 3);
 });
