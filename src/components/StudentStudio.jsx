@@ -37,10 +37,9 @@ import {
   Download,
   Check,
   MessageSquare,
-  PanelRightClose,
   PanelRightOpen,
-  MoreHorizontal,
-  X
+  ChevronRight,
+  MoreHorizontal
 } from 'lucide-react';
 
 export default function StudentStudio({
@@ -175,7 +174,7 @@ export default function StudentStudio({
   );
   const isWideFeedback = useFeedbackDrawer(isFeedbackOpen && Boolean(selectedTopic) && !isFriendsOpen && !isCompletionOpen, () => {
     setFeedbackOpen(false); setHighlightedQuote(''); setIsQuestionOpen(false);
-    feedbackToggleRef.current?.focus();
+    requestAnimationFrame(() => feedbackToggleRef.current?.focus());
   });
 
   useEffect(() => {
@@ -186,7 +185,9 @@ export default function StudentStudio({
 
   useEffect(() => {
     if (!isFeedbackOpen || !isQuestionOpen || !focusQuestionRequested) return;
-    questionInputRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const panel = document.querySelector('#student-feedback-panel .student-feedback-drawer-content');
+    const input = questionInputRef.current;
+    if (panel && input) panel.scrollTo({ top: panel.scrollTop + input.getBoundingClientRect().top - panel.getBoundingClientRect().top - 80, behavior: 'smooth' });
     questionInputRef.current?.focus({ preventScroll: true });
     setFocusQuestionRequested(false);
   }, [isFeedbackOpen, isQuestionOpen, focusQuestionRequested]);
@@ -661,7 +662,7 @@ export default function StudentStudio({
     setFeedbackOpen(false);
     setHighlightedQuote('');
     setIsQuestionOpen(false);
-    feedbackToggleRef.current?.focus();
+    requestAnimationFrame(() => feedbackToggleRef.current?.focus());
   };
   const openQuestion = () => {
     setFeedbackOpen(true);
@@ -757,13 +758,8 @@ export default function StudentStudio({
         </div>
       )}
 
-      <div className={'student-notebook-layout flex-1 ' + (isFeedbackOpen ? '' : 'is-feedback-closed')}>
+      <div className="student-notebook-layout flex-1">
         <section aria-label="내 글 공책" className="student-paper-shell notebook-card sketch-card bg-white flex flex-col">
-          <button ref={feedbackToggleRef} type="button" aria-expanded={isFeedbackOpen} aria-controls="student-feedback-panel"
-            aria-label={isFeedbackOpen ? '선생님 첨삭 닫기' : '선생님 첨삭 보기'} onClick={() => isFeedbackOpen ? closeFeedback() : setFeedbackOpen(true)} className="student-feedback-tab">
-            {isFeedbackOpen ? <PanelRightClose className="w-4 h-4" aria-hidden="true" /> : <PanelRightOpen className="w-4 h-4" aria-hidden="true" />}
-            <span>{isFeedbackOpen ? '첨삭 닫기' : '첨삭 보기'}</span>{feedbackPages.length > 0 && <span className="student-feedback-dot" aria-hidden="true" />}
-          </button>
           <div className="student-paper-toolbar">
             <div className="flex items-center gap-3 flex-wrap">
               <h2 className="text-sm font-semibold text-[#475569]">{viewingPageIdx === null ? '내 글' : draftPages[viewingPageIdx]?.label}</h2>
@@ -886,13 +882,17 @@ export default function StudentStudio({
           </footer>
         </section>
 
-        <StudentFeedbackSurface wide={isWideFeedback} open={isFeedbackOpen} onClose={closeFeedback}>
-        <aside id="student-feedback-panel" aria-label="선생님 첨삭" role={isWideFeedback ? undefined : 'dialog'} aria-modal={!isWideFeedback && isFeedbackOpen ? true : undefined} hidden={!isFeedbackOpen} className="student-feedback-panel sketch-card bg-white p-6 sm:p-7 space-y-6">
-          <header className="flex items-center justify-between gap-3">
+        <StudentFeedbackSurface open={isFeedbackOpen} onClose={closeFeedback} trigger={
+          <button ref={feedbackToggleRef} type="button" aria-expanded={false} aria-controls="student-feedback-panel" aria-label="선생님 첨삭 보기" onClick={() => setFeedbackOpen(true)} className="student-feedback-tab">
+            <PanelRightOpen className="w-4 h-4" aria-hidden="true" /><span>첨삭 보기</span>{feedbackPages.length > 0 && <span className="student-feedback-dot" aria-hidden="true" />}
+          </button>
+        }>
+        <aside id="student-feedback-panel" aria-label="선생님 첨삭" role={isWideFeedback ? undefined : 'dialog'} aria-modal={!isWideFeedback && isFeedbackOpen ? true : undefined} className="student-feedback-panel bg-white">
+          <header className="student-feedback-drawer-header">
             <h2 className="flex items-center gap-2 text-base font-semibold text-[#334155]"><MessageSquare className="w-4 h-4" aria-hidden="true" />선생님 첨삭</h2>
-            <button type="button" onClick={closeFeedback} className="student-text-button" aria-label="첨삭 패널 닫기"><X className="w-4 h-4" aria-hidden="true" /></button>
+            <button type="button" onClick={closeFeedback} className="student-action-button" aria-label="첨삭 패널 닫기">첨삭 닫기<ChevronRight className="w-4 h-4" aria-hidden="true" /></button>
           </header>
-
+          <div className="student-feedback-drawer-content space-y-6">
           {feedbackPages.length > 1 ? (
             <label className="flex items-center gap-3 text-sm text-[#64748B]">
               지난 피드백
@@ -964,6 +964,7 @@ export default function StudentStudio({
               )}
             </div>
           </details>
+          </div>
         </aside>
         </StudentFeedbackSurface>
       </div>
