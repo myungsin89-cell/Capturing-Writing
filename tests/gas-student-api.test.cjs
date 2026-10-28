@@ -154,6 +154,32 @@ test('학생 공개 초기화 응답은 학생과 질문 전체를 노출하지 
   assert.equal(result.config.classAccessKeys, undefined);
 });
 
+test('친구 공책 API는 로그인한 학급·주제의 승인본만 반환하고 개인 수정은 숨긴다', () => {
+  const { context } = makeHarness();
+  const login = context.studentLoginV2({ spreadsheetId: 'spreadsheet-id-1234567890', classId: 'CLASS_A', accessKey: 'class-secret', number: '1', name: '가학생' });
+  const stateContext = context.readAppStateV2_('spreadsheet-id-1234567890');
+  const friend = stateContext.state.students[1];
+  Object.assign(friend, { status: 'FINAL_COMPLETED', pieceTitle: '완성 제목', draft1: '  완성 글\n\n다음 문단', teacherNote: '비공개 첨삭' });
+  stateContext.state.students.push({ ...friend, classId: 'OTHER', number: '3' });
+  stateContext.state.topics.push({ id: 'PAST', classId: 'CLASS_A' }, { id: 'OTHER_TOPIC', classId: 'OTHER' });
+  friend.historyByTopic.PAST = { status: 'FINAL_COMPLETED', pieceTitle: '지난 글', draft1: '지난 본문' };
+  context.writeAppStateV2_(stateContext);
+  const payload = { spreadsheetId: 'spreadsheet-id-1234567890', sessionToken: login.sessionToken, topicId: 'TOPIC_A' };
+  let result = context.studentCompletedWritingsV2(payload);
+  assert.equal(result.writings.length, 1);
+  assert.equal(result.writings[0].text, '  완성 글\n\n다음 문단');
+  assert.equal(result.writings[0].teacherNote, undefined);
+  assert.equal(result.writings[0].draftHistory, undefined);
+  const revised = context.appendDraftRevisionV2_(friend, '개인 수정', '새 제목', '', 'new', { keepFinalCompleted: true });
+  stateContext.state.students[1] = revised;
+  context.writeAppStateV2_(stateContext);
+  result = context.studentCompletedWritingsV2(payload);
+  assert.equal(result.writings[0].text, '  완성 글\n\n다음 문단');
+  assert.equal(context.studentCompletedWritingsV2({ ...payload, topicId: 'PAST' }).writings[0].text, '지난 본문');
+  assert.throws(() => context.studentCompletedWritingsV2({ ...payload, topicId: 'OTHER_TOPIC' }), /주제/);
+  assert.throws(() => context.studentCompletedWritingsV2({ ...payload, sessionToken: 'bad' }), /만료/);
+});
+
 test('번호와 이름이 일치한 학생에게만 자기 데이터와 세션을 반환한다', () => {
   const { context } = makeHarness();
   const denied = context.studentLoginV2({

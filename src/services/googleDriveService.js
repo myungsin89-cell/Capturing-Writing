@@ -11,15 +11,20 @@
 
 import gasCodeRaw from '../../gas/Code.gs?raw';
 import gasManifestRaw from '../../gas/appsscript.json?raw';
-import { prepareFeedbackBatch } from './batchFeedbackDrive';
+import { prepareFeedbackBatch, cleanupFeedbackBatch } from './batchFeedbackDrive';
 import {
   applyFeedbackToStudent, getFeedbackTopicRecord, hasFeedbackContent,
-  nextRecordTimestamp, wasBatchFeedbackDelivered
+  nextRecordTimestamp, wasBatchFeedbackDelivered, preserveCompletedWriting, getClassCompletedWritings
 } from '../utils/batchFeedback';
 
 export function prepareFeedbackBatchInDrive(accessToken, batch, onProgress) {
   if (!accessToken) throw new Error('구글 로그인 후 묶음 피드백을 준비해 주세요.');
   return prepareFeedbackBatch((url, options) => googleFetch(url, accessToken, options), batch, onProgress);
+}
+
+export function cleanupFeedbackBatchInDrive(accessToken, batch, onProgress, protectedFileIds = []) {
+  if (!accessToken) throw new Error('구글 로그인 후 임시 자료를 정리해 주세요.');
+  return cleanupFeedbackBatch((url, options) => googleFetch(url, accessToken, options), batch, onProgress, { protectedFileIds });
 }
 
 export const DEFAULT_GOOGLE_CLIENT_ID =
@@ -695,6 +700,7 @@ function getStoredDraftHistory(record = {}) {
 }
 
 function appendStoredDraftRevision(record = {}, text, pieceTitle, updatedAt, updatedAtIso, options = {}) {
+  record = preserveCompletedWriting(record);
   const history = getStoredDraftHistory(record);
   if (options.isRecallUpdate && history.length > 0) {
     const lastIndex = history.length - 1;
@@ -1470,6 +1476,14 @@ export async function callDirectSheetStudentApi(payload = {}) {
     }
     const { classId, accessKey, number, name } = decodedSession;
     validateAccess(classId, accessKey);
+
+    if (action === 'studentCompletedWritings') {
+      const viewer = state.students.find((student) => belongsToClass(student, classId) &&
+        String(student.number).trim() === String(number).trim() &&
+        String(student.name).trim() === String(name).trim());
+      if (!viewer) return { ok: false, error: '학생 정보를 찾을 수 없습니다.' };
+      return { ok: true, writings: getClassCompletedWritings(state, classId, payload.topicId, number) };
+    }
 
     if (action === 'studentRefresh') {
       const student = state.students.find(

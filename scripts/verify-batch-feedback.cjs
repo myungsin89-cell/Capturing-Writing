@@ -32,6 +32,8 @@ async function main() {
   let originalReadGate = null;
   const originalDocRequests = [];
   let failSecondDoc = true;
+  let failCleanupSecondDoc = false;
+  const trashEvents = [];
   await context.route('https://**/*', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
@@ -56,15 +58,32 @@ async function main() {
       return reply({});
     }
     if (url.hostname === 'www.googleapis.com') {
+      if (req.method() === 'DELETE') throw new Error('Permanent deletion is forbidden');
       if (url.pathname.endsWith('/permissions')) return reply({ id: 'PERMISSION' });
       if (url.pathname.endsWith('/comments')) return reply({ comments: [] });
       if (url.searchParams.has('q')) {
+        const parent = url.searchParams.get('q').match(/'([^']+)' in parents/);
         const match = url.searchParams.get('q').match(/key='(\w+)' and value='([^']+)'/);
+        if (parent) return reply({ files: files.filter((file) => !file.trashed && file.parents?.includes(parent[1]) && (!match || file.appProperties?.[match[1]] === match[2])) });
         return reply({ files: match ? files.filter((file) => file.appProperties?.[match[1]] === match[2]) : [] });
       }
       if (url.pathname.endsWith('/files') && req.method() === 'POST') {
         const file = { id: `QA_FILE_${files.length}`, ...body }; files.push(file);
         if (body.mimeType.endsWith('document')) docs.set(file.id, '');
+        return reply(file);
+      }
+      const fileId = url.pathname.split('/').at(-1);
+      const file = files.find((item) => item.id === fileId);
+      if (file && req.method() === 'GET') return reply(file);
+      if (file && req.method() === 'PATCH') {
+        assert.deepEqual(body, { trashed: true });
+        if (file.mimeType.endsWith('document')) {
+          const number = Number(file.name.match(/^(\d+)번/)?.[1]);
+          if (number) assert.equal(state.students[number - 1].status, 'FEEDBACK_DONE', 'persist feedback before trashing');
+          if (failCleanupSecondDoc && number === 2) return route.fulfill({ status: 403, body: 'mock permission failure' });
+        }
+        file.trashed = true;
+        trashEvents.push(file.id);
         return reply(file);
       }
       return reply({});
@@ -172,7 +191,7 @@ async function main() {
     await openIndividual(); await openBatch();
     assert.equal(await candidateTwo.isChecked(), false);
     await candidateTwo.check();
-    await page.getByRole('button', { name: '선택한 2명 묶음 준비' }).click();
+    await panel.getByRole('button', { name: '선택한 2명 폴더 준비' }).click();
     await page.getByText('2명 중 1명의 제출본을 준비했습니다.', { exact: false }).waitFor();
     await page.getByRole('button', { name: '준비 실패·중단 문서 다시 준비' }).click();
     await page.getByText('2명 중 2명의 제출본을 준비했습니다.', { exact: false }).waitFor();
@@ -199,7 +218,7 @@ async function main() {
     await page.evaluate(() => window.scrollTo(0, 0));
     assert.equal(state.students[2].status, 'STAGE_1_WRITING');
     for (const file of files.filter((item) => item.mimeType.endsWith('document'))) feedbackDocs.add(file.id);
-    await page.getByRole('button', { name: '묶음 첨삭 가져오기' }).click();
+    await page.getByRole('button', { name: '전체 첨삭 다시 확인' }).click();
     await page.getByText('가져옴 2명', { exact: false }).waitFor();
     const sendButton = page.getByRole('button', { name: '이 학생에게 보내고 다음 학생', exact: true });
     assert.equal(await sendButton.isDisabled(), true);
@@ -210,10 +229,11 @@ async function main() {
     await review.check();
     await openIndividual(); await openBatch();
     assert.equal(await review.isChecked(), true);
-    await page.getByRole('button', { name: '묶음 첨삭 가져오기' }).click();
+    await page.getByRole('button', { name: '전체 첨삭 다시 확인' }).click();
     await page.getByText('가져옴 0명', { exact: false }).waitFor();
     assert.match(await page.getByLabel('학생에게 보낼 종합 조언', { exact: true }).inputValue(), /교사가 보완한/);
     assert.equal(state.students[0].teacherNote, undefined);
+    assert.equal(trashEvents.length, 0, 'importing alone must not trash anything');
     await page.reload();
     await openWorkspace();
     await openBatch();
@@ -227,6 +247,10 @@ async function main() {
     assert.equal(state.students[1].status, 'STAGE_1_SUBMITTED');
     assert.equal(state.students[2].status, 'STAGE_1_WRITING');
     assert.equal(originalDocRequests.length, 0);
+    await page.getByText('전송한 학생의 임시 독스를 정리했습니다.', { exact: false }).waitFor();
+    assert.equal(files.find((item) => item.name.startsWith('1번')).trashed, true);
+    assert.notEqual(files.find((item) => item.name.startsWith('2번')).trashed, true);
+    assert.notEqual(files.find((item) => item.mimeType.endsWith('folder')).trashed, true);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: path.join(process.env.BATCH_FEEDBACK_QA_DIR || root, 'batch-feedback-desktop.png'), fullPage: true });
     // The local screen still has the submitted status; the send must recheck the server.
@@ -259,19 +283,42 @@ async function main() {
     await page.setViewportSize({ width: 1440, height: 1050 });
     await page.reload(); await openWorkspace();
     await openBatch();
-    await page.getByRole('button', { name: '선택한 2명 묶음 준비' }).click();
+    await panel.getByRole('button', { name: '선택한 2명 폴더 준비' }).click();
     await page.getByText('2명 중 2명의 제출본을 준비했습니다.', { exact: false }).waitFor();
     for (const file of files.filter((item) => item.mimeType.endsWith('document'))) feedbackDocs.add(file.id);
-    await page.getByRole('button', { name: '묶음 첨삭 가져오기' }).click();
+    await page.getByRole('button', { name: '전체 첨삭 다시 확인' }).click();
     await page.getByText('가져옴 2명', { exact: false }).waitFor();
     await page.getByRole('checkbox', { name: /학생의 제출본과 조언을 읽고 확인했습니다/ }).check();
     await roster.getByRole('button').filter({ hasText: '나학생' }).click();
     await page.getByRole('checkbox', { name: /학생의 제출본과 조언을 읽고 확인했습니다/ }).check();
+    failCleanupSecondDoc = true;
     await page.getByRole('button', { name: '교사가 확인한 2명 함께 전송' }).click();
     await page.getByText('2명에게 피드백을 전송했습니다.', { exact: false }).waitFor();
     assert.equal(state.students[0].status, 'FEEDBACK_DONE');
     assert.equal(state.students[1].status, 'FEEDBACK_DONE');
     assert.equal(state.students[2].status, 'STAGE_1_WRITING');
+    await page.getByText('피드백은 전송됐지만 임시 자료 정리가 남았습니다.', { exact: false }).waitFor();
+    assert.notEqual(files.find((file) => file.mimeType.endsWith('folder')).trashed, true);
+    failCleanupSecondDoc = false;
+    await page.getByRole('button', { name: '임시 자료 정리 다시 시도', exact: true }).click();
+    await page.getByText('전송과 임시 자료 정리가 끝난 묶음입니다.', { exact: false }).waitFor();
+    assert.equal(files.every((file) => file.trashed), true);
+    assert.equal(await panel.getByRole('link', { name: '이 제출본 독스 열기' }).count(), 0);
+    assert.match(await page.getByLabel('학생에게 보낼 종합 조언', { exact: true }).inputValue(), /장면을 순서대로/);
+    // Previous completed batches can be removed together without touching originals.
+    const oldBatch = await page.evaluate(() => {
+      const key = Object.keys(localStorage).find((key) => key.startsWith('sseudam_feedback_batches_v1:'));
+      const batches = JSON.parse(localStorage.getItem(key));
+      const old = { ...batches[0], id: 'QA_OLD_BATCH', label: '이전 완료 묶음', folderId: 'QA_OLD_FOLDER', folderUrl: '', cleanedAt: '', cleanupError: '', entries: [{ ...batches[0].entries[0], id: 'QA_OLD_ENTRY', docId: 'QA_OLD_DOC', docUrl: '', docTrashedAt: '' }] };
+      localStorage.setItem(key, JSON.stringify([...batches, old]));
+      return old;
+    });
+    files.push({ id: oldBatch.folderId, mimeType: 'application/vnd.google-apps.folder', appProperties: { sseudamBatchId: oldBatch.id } },
+      { id: 'QA_OLD_DOC', name: 'previous completed doc', mimeType: 'application/vnd.google-apps.document', parents: [oldBatch.folderId], appProperties: { sseudamBatchId: oldBatch.id, sseudamEntryId: 'QA_OLD_ENTRY' } });
+    await page.reload(); await openWorkspace(); await openBatch();
+    await page.getByRole('button', { name: '완료 묶음 폴더 1개 정리', exact: true }).click();
+    await page.getByText('완료 묶음 1개를 휴지통으로 정리했습니다.', { exact: false }).waitFor();
+    assert.equal(files.every((file) => file.trashed), true);
     // A fresh personal-feedback session verifies focus-driven import and edit protection.
     state = structuredClone(seed); files.length = 0; docs.clear(); feedbackDocs.clear();
     await page.evaluate(() => localStorage.clear());
@@ -289,15 +336,12 @@ async function main() {
     await page.getByText('아직 독스에 삽입된 첨삭이 없습니다.', { exact: true }).waitFor();
     feedbackDocs.add('ORIGINAL_1');
     await page.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await page.getByText('독스 첨삭을 불러왔습니다.', { exact: true }).waitFor();
+    await page.getByText('브릭스트 첨삭을 바로 불러왔습니다.', { exact: true }).waitFor();
     assert.match(await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).inputValue(), /장면을 순서대로/);
     await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).fill('교사가 직접 쓴 소중한 조언');
     feedbackTextByDoc.set('ORIGINAL_1', '독스의 새로운 첨삭');
     await openStudentDoc(); await returnToWriting();
-    await page.getByText('작성 중인 조언을 유지했습니다. 가져온 첨삭을 확인해 주세요.', { exact: true }).waitFor();
-    assert.equal(await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).inputValue(), '교사가 직접 쓴 소중한 조언');
-    await page.getByText('가져온 첨삭 보기', { exact: true }).click();
-    await page.getByRole('button', { name: '현재 조언에 덧붙이기', exact: true }).click();
+    await page.getByText('브릭스트 첨삭을 바로 불러왔습니다.', { exact: true }).waitFor();
     const appended = await page.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).inputValue();
     assert.match(appended, /^교사가 직접 쓴 소중한 조언/);
     assert.match(appended, /독스의 새로운 첨삭/);
@@ -331,7 +375,7 @@ async function main() {
     await rosterScroll.evaluate((element) => { element.scrollTop = 0; });
     await page.screenshot({ path: path.join(process.env.BATCH_FEEDBACK_QA_DIR || root, 'feedback-roster-27-mobile.png'), fullPage: true });
     assert.deepEqual(pageErrors, []);
-    console.log(JSON.stringify({ passed: true, checks: ['common roster mode control', 'equal header button heights', 'keyboard mode navigation', 'individual draft preserved per student', 'batch selection and review preserved across modes', 'criteria dialog reuse and save', 'unsaved dialog changes protected', 'existing batch criteria retained after settings change', 'personal criteria copy across students', 'clipboard denial fallback', 'partial preparation retry', 'source docs preserved during batch', 'teacher review gate', 'manual edits retained', 'browser reload recovery', 'send selected student only', 'remote recall rejected and refreshed', 'mobile panel and dialog fit', 'dialog focus restored', 'reviewed batch send', 'focus-driven doc import', 'retry only when needed', 'teacher edits protected and explicitly appended', 'late doc response cannot affect another student', '27-student common roster fits desktop and mobile'], pageErrors }));
+    console.log(JSON.stringify({ passed: true, checks: ['common roster mode control', 'equal header button heights', 'keyboard mode navigation', 'individual draft preserved per student', 'batch selection and review preserved across modes', 'criteria dialog reuse and save', 'unsaved dialog changes protected', 'existing batch criteria retained after settings change', 'personal criteria copy across students', 'clipboard denial fallback', 'partial preparation retry', 'source docs preserved during batch', 'teacher review gate', 'manual edits retained', 'browser reload recovery', 'send selected student only', 'remote recall rejected and refreshed', 'mobile panel and dialog fit', 'dialog focus restored', 'reviewed batch send', 'trash only after persisted feedback', 'keep unsent files', 'cleanup failure retry', 'completed batch bulk cleanup', 'focus-driven doc import', 'retry only when needed', 'teacher edits preserved with immediate merge', 'late doc response cannot affect another student', '27-student common roster fits desktop and mobile'], pageErrors }));
   } catch (error) {
     await page.screenshot({ path: path.join(process.env.BATCH_FEEDBACK_QA_DIR || process.cwd(), 'batch-feedback-failure.png'), fullPage: true });
     throw error;

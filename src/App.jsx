@@ -25,7 +25,8 @@ import {
 import { shouldAutoSaveTeacherState } from './utils/syncPolicy';
 import {
   getFeedbackTopicRecord, isMatchingSubmission, nextRecordTimestamp,
-  normalizeFeedbackCriteria, updateWritingFeedbackRecord, wasBatchFeedbackDelivered
+  normalizeFeedbackCriteria, updateWritingFeedbackRecord, wasBatchFeedbackDelivered,
+  preserveCompletedWriting, getClassCompletedWritings, isFeedbackCandidate, preserveStudentCompletedWritings
 } from './utils/batchFeedback';
 import { getUsableDraftHistory, repairLeakedDraftHistory, transitionStudentToNewTopic } from './utils/topicTransition.js';
 import { createStudentRequestGuard } from './utils/studentRequestGuard.js';
@@ -120,6 +121,7 @@ function getDraftHistory(record = {}) {
 }
 
 function appendDraftRevision(record = {}, text, pieceTitle, updatedAt, updatedAtIso, options = {}) {
+  record = preserveCompletedWriting(record);
   const history = getDraftHistory(record);
   if (options.isRecallUpdate && history.length > 0) {
     const lastIndex = history.length - 1;
@@ -356,6 +358,14 @@ export default function App() {
   useEffect(() => {
     if (isStudentUrlMode) return;
     localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
+  }, [students, isStudentUrlMode]);
+
+  useEffect(() => {
+    if (isStudentUrlMode) return;
+    setStudents((previous) => {
+      const next = previous.map(preserveStudentCompletedWritings);
+      return next.some((student, index) => student !== previous[index]) ? next : previous;
+    });
   }, [students, isStudentUrlMode]);
 
   // 예전 새 주제 전환에서 남은 draftHistory가 빈 공책에 섞인 경우 한 번 정리합니다.
@@ -849,6 +859,28 @@ export default function App() {
     setQuestions([]);
   };
 
+  const handleLoadCompletedWritings = async (topicId) => {
+    if (!isStudentUrlMode) return { ok: true, writings: getClassCompletedWritings(
+      { classes, topics, students, config }, config.activeClassId, topicId, activeStudent?.number
+    ) };
+    const payload = { action: 'studentCompletedWritings', topicId, sessionToken: studentSession?.token || '' };
+    const result = await callGasApi(payload);
+    if (result?.ok) return result;
+    // Older relays do not have this read-only action yet. Authenticate through
+    // the existing direct login path rather than asking teachers to redeploy.
+    if (gasUrl && activeStudent) {
+      const login = await callDirectSheetStudentApi({
+        action: 'studentLogin', spreadsheetId: urlSheetId, classId: urlClassId,
+        accessKey: urlAccessKey, number: activeStudent.number, name: activeStudent.name
+      });
+      if (login?.ok) return callDirectSheetStudentApi({
+        ...payload, spreadsheetId: urlSheetId, sessionToken: login.sessionToken
+      });
+      return { ok: false, error: login?.error || '친구 글을 불러오지 못했어요. 다시 시도해 주세요.' };
+    }
+    return { ok: false, error: result?.error || '친구 글을 불러오지 못했어요. 다시 시도해 주세요.' };
+  };
+
   // 로그인한 학생 화면만 자신의 최신 글·첨삭·질문을 순차적으로 갱신합니다.
   useEffect(() => {
     if (!isStudentUrlMode || !studentSession?.token || !urlSheetId) return;
@@ -1098,6 +1130,9 @@ export default function App() {
     const targetTopicData = isActiveTopic
       ? targetSt
       : { ...targetSt, ...(targetSt?.historyByTopic?.[targetTopicId] || {}) };
+    if (status === 'FEEDBACK_DONE' && !isFeedbackCandidate(targetTopicData)) {
+      return { ok: false, error: '학생이 첨삭을 요청한 제출본에만 첨삭을 보낼 수 있습니다.' };
+    }
     const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
     // 학생 기기의 시간이 교사 기기보다 앞서 있어도, 첨삭 완료가 해당 제출보다 최신이 되게 합니다.
     const nowIso = nextRecordTimestamp([targetSt, targetTopicData]);
@@ -1860,6 +1895,7 @@ export default function App() {
             onSubmitStage={handleSubmitStage}
             onUnsubmitStage={handleUnsubmitStage}
             onAddQuestion={handleAddQuestion}
+            onLoadCompletedWritings={handleLoadCompletedWritings}
           />
         ) : (
           <TeacherDashboard

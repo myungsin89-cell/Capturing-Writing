@@ -14,7 +14,7 @@ import { GrowthDiffModal } from './GrowthDiffView';
 import StudentShareModal from './StudentShareModal';
 import BatchFeedbackPanel, { BatchFeedbackWorkspace } from './BatchFeedbackPanel';
 import FeedbackCriteriaDialog from './FeedbackCriteriaDialog';
-import { buildFeedbackPrompt, getSubmissionSnapshot, mergeImportedFeedback } from '../utils/batchFeedback';
+import { buildFeedbackPrompt, getSubmissionSnapshot, mergeImportedFeedback, isFeedbackCandidate } from '../utils/batchFeedback';
 import {
   STAGE_META,
   renderTextWithHighlight,
@@ -236,6 +236,7 @@ export default function TeacherDashboard({
   const personalContextKey = JSON.stringify([currentTopic?.id, selectedStudent?.number, selectedSubmissionKey]);
   docContextRef.current = { key: personalContextKey, note: feedbackNote, comments: modalFeedbackItems };
   const isSelectedStudentFinal = isFinalWritingStatus(selectedStudent?.status);
+  const canSendSelectedFeedback = isFeedbackCandidate(selectedStudent);
   const canFinalizeSelectedStudent =
     draftPages.length > 0 && isSubmittedWritingStatus(selectedStudent?.status);
 
@@ -521,7 +522,7 @@ export default function TeacherDashboard({
 
   const handleConfirmFeedbackDone = (e) => {
     e.preventDefault();
-    if (!selectedStudent) return;
+    if (!selectedStudent || !canSendSelectedFeedback) return;
     onUpdateStudentStatus({
       number: selectedStudent.number,
       topicId: currentTopic?.id || '',
@@ -544,19 +545,6 @@ export default function TeacherDashboard({
       feedbackItems: modalFeedbackItems
     });
     showToast(`${selectedStudent.name} 학생의 글을 최종 완성본으로 확정했습니다!`);
-  };
-
-  const handleReopenWriting = () => {
-    if (!selectedStudent) return;
-    onUpdateStudentStatus({
-      number: selectedStudent.number,
-      topicId: currentTopic?.id || '',
-      status: 'FEEDBACK_DONE',
-      locked: false,
-      teacherNote: feedbackNote,
-      feedbackItems: modalFeedbackItems
-    });
-    showToast(`${selectedStudent.name} 학생이 다시 수정할 수 있도록 공책을 열었습니다!`);
   };
 
   const parseRosterLines = (txt = '') =>
@@ -2651,7 +2639,7 @@ export default function TeacherDashboard({
 
               return (
                 <div className="space-y-2">
-                  {hasUnsentFeedback && (
+                  {hasUnsentFeedback && canSendSelectedFeedback && (
                     <div className="text-center text-xs font-bold text-[#B45309] bg-[#FEF3C7] border border-[#FCD34D] rounded-xl py-1.5 px-3">
                       새로 작성·수정한 첨삭이 있습니다. 아래 버튼을 눌러 전송해 주세요!
                     </div>
@@ -2661,20 +2649,13 @@ export default function TeacherDashboard({
                       <div className="text-center text-xs font-bold text-[#1B4332] bg-[#D8F3DC] border border-[#52B788] rounded-xl py-2 px-3">
                         이 글은 최종 완성본으로 확정되어 있습니다.
                       </div>
-                      <button
-                        type="button"
-                        onClick={handleReopenWriting}
-                        className="w-full h-13 sketch-btn-secondary text-sm sm:text-base font-bold flex items-center justify-center gap-2"
-                      >
-                        <HandDrawnPencilIcon size={18} color="#1B4332" />
-                        <span>수정 다시 열기</span>
-                      </button>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <button
                         type="submit"
-                        className={`h-13 text-sm font-bold flex items-center justify-center gap-2 rounded-2xl transition cursor-pointer ${
+                        disabled={!canSendSelectedFeedback}
+                        className={`h-13 text-sm font-bold flex items-center justify-center gap-2 rounded-2xl transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                           hasUnsentFeedback
                             ? 'bg-[#D97706] hover:bg-[#B45309] text-white border-2 border-[#92400E] shadow-md'
                             : 'sketch-btn-primary'
@@ -2694,7 +2675,7 @@ export default function TeacherDashboard({
                       </button>
                       {!canFinalizeSelectedStudent && draftPages.length > 0 && (
                         <div className="sm:col-span-2 text-center text-[11px] text-[#64748B]">
-                          학생이 수정본을 제출하면 최종 완성 처리할 수 있습니다.
+                          학생이 글을 제출하거나 첨삭을 요청하면 전송·완성 처리를 할 수 있습니다.
                         </div>
                       )}
                     </div>

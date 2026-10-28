@@ -38,6 +38,7 @@ export function transitionStudentToNewTopic(
     updatedAt: student.updatedAt || '',
     updatedAtIso: student.updatedAtIso || ''
   };
+  if (student.completedWriting) previousRecord.completedWriting = student.completedWriting;
   if (student.recalled) previousRecord.recalled = true;
 
   const nextStudent = {
@@ -64,6 +65,7 @@ export function transitionStudentToNewTopic(
     updatedAtIso: nowIso
   };
   delete nextStudent.recalled;
+  delete nextStudent.completedWriting;
   return nextStudent;
 }
 

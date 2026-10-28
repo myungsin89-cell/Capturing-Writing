@@ -68,6 +68,9 @@ function handleRequest(e) {
       case 'studentRefresh':
         result = studentRefreshV2(payload);
         break;
+      case 'studentCompletedWritings':
+        result = studentCompletedWritingsV2(payload);
+        break;
       case 'createStudentDocs':
         result = createStudentDocs(payload);
         break;
@@ -407,8 +410,55 @@ function getDraftHistoryV2_(record) {
   });
 }
 
+function completedWritingV2_(record) {
+  record = record || {};
+  var saved = record.completedWriting;
+  if (saved && String(saved.text || '').trim()) {
+    return { pieceTitle: String(saved.pieceTitle || ''), text: String(saved.text), completedAt: saved.completedAt || '' };
+  }
+  if (record.status !== 'FINAL_COMPLETED') return null;
+  var history = getDraftHistoryV2_(record);
+  var latest = history[history.length - 1];
+  return latest ? {
+    pieceTitle: String(record.pieceTitle || latest.pieceTitle || ''),
+    text: String(latest.text), completedAt: record.updatedAtIso || ''
+  } : null;
+}
+
+function studentCompletedWritingsV2(payload) {
+  var session = requireStudentSessionV2_(payload);
+  var state = readAppStateV2_(session.spreadsheetId).state;
+  var viewer = state.students.find(function(student) {
+    return belongsToClassV2_(student, session.classId, state) &&
+      String(student.number).trim() === String(session.number).trim() &&
+      String(student.name).trim() === String(session.name).trim();
+  });
+  if (!viewer) throw new Error('학생 정보를 찾을 수 없습니다.');
+  var topic = topicsForClassV2_(state, session.classId).find(function(item) {
+    return String(item.id) === String(payload.topicId);
+  });
+  if (!topic) throw new Error('글쓰기 주제를 찾을 수 없습니다.');
+  var activeTopic = findActiveTopicV2_(state, session.classId);
+  var writings = [];
+  state.students.forEach(function(student) {
+    if (!belongsToClassV2_(student, session.classId, state) ||
+      String(student.number).trim() === String(session.number).trim()) return;
+    var record = activeTopic && String(activeTopic.id) === String(topic.id)
+      ? student : (student.historyByTopic || {})[topic.id] || {};
+    var writing = completedWritingV2_(record);
+    if (writing) writings.push({
+      number: String(student.number), name: String(student.name || ''),
+      pieceTitle: writing.pieceTitle, text: writing.text, completedAt: writing.completedAt
+    });
+  });
+  writings.sort(function(a, b) { return a.number.localeCompare(b.number, 'ko', { numeric: true }); });
+  return { ok: true, writings: writings };
+}
+
 function appendDraftRevisionV2_(record, text, pieceTitle, updatedAt, updatedAtIso, options) {
   record = record || {};
+  var completedWriting = completedWritingV2_(record);
+  if (completedWriting) record = Object.assign({}, record, { completedWriting: completedWriting });
   options = options || {};
   var history = getDraftHistoryV2_(record).slice();
 

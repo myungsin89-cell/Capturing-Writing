@@ -1,9 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Check, Copy, ExternalLink, RefreshCw } from 'lucide-react';
-import { prepareFeedbackBatchInDrive, pullBriskFeedbackFromGoogleDoc } from '../services/googleDriveService';
+import { Check, Copy, ExternalLink, RefreshCw, Trash2 } from 'lucide-react';
+import { prepareFeedbackBatchInDrive, pullBriskFeedbackFromGoogleDoc, cleanupFeedbackBatchInDrive } from '../services/googleDriveService';
 import {
   BRISK_BATCH_FEEDBACK_URL, buildFeedbackPrompt, ensureKoreanFeedbackPrompt, getFeedbackTopicRecord, getSubmissionSnapshot, hasFeedbackContent,
-  isFeedbackCandidate, isMatchingSubmission, wasBatchFeedbackDelivered
+  isFeedbackCandidate, isMatchingSubmission, wasBatchFeedbackDelivered, isFeedbackBatchComplete
 } from '../utils/batchFeedback';
 
 const buttonClass = 'sketch-btn-secondary min-h-11 px-4 py-2 text-sm font-bold inline-flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed';
@@ -72,6 +72,7 @@ export function BatchFeedbackWorkspace({ topic, students, config, googleAuth, on
     .filter((record) => !workspace.some((batch) => batch.entries.some((entry) => !entry.sentAt && isMatchingSubmission(record, entry))));
   const chosen = candidates.filter((record) => selectedNumbers === null || selectedNumbers.includes(String(record.number)));
   const activeBatch = workspace.find((batch) => batch.id === activeBatchId);
+  const completedBatches = workspace.filter((batch) => isFeedbackBatchComplete(batch) && !batch.cleanedAt);
   const activeEntry = activeBatch?.entries.find((entry) => String(entry.number) === String(selectedStudentNumber));
   const criteriaChanged = activeBatch && activeBatch.prompt !== buildFeedbackPrompt(topic, topic.feedbackCriteria);
 
@@ -111,6 +112,7 @@ export function BatchFeedbackWorkspace({ topic, students, config, googleAuth, on
     if (!googleAuth?.accessToken) throw new Error('구글 로그인 후 가져와 주세요.');
     const batch = workspaceRef.current.find((item) => item.id === batchId);
     if (!batch) throw new Error('가져올 묶음을 먼저 준비해 주세요.');
+    if (batch.cleanedAt) { setMessage('이 묶음은 전송과 임시 자료 정리가 끝났습니다. 저장된 조언을 아래에서 볼 수 있습니다.'); return; }
     let imported = 0; let empty = 0; let failed = 0; let stale = 0; let retained = 0;
     for (const entry of batch.entries) {
       // Teacher edits and already imported feedback are retained on a repeated import.
@@ -133,7 +135,7 @@ export function BatchFeedbackWorkspace({ topic, students, config, googleAuth, on
   });
 
   const openBrisk = () => {
-    if (!activeBatch || busyRef.current) return;
+    if (!activeBatch || activeBatch.cleanedAt || busyRef.current) return;
     briskOpenedAtRef.current = Date.now();
     setAwaitingBriskBatchId(activeBatch.id);
     copyText(activeBatch.prompt || buildFeedbackPrompt(topic, topic.feedbackCriteria));
@@ -158,6 +160,34 @@ export function BatchFeedbackWorkspace({ topic, students, config, googleAuth, on
     document.addEventListener('visibilitychange', onReturn);
     return () => { window.removeEventListener('focus', onReturn); document.removeEventListener('visibilitychange', onReturn); };
   }, [awaitingBriskBatchId, googleAuth?.accessToken]);
+
+  const cleanupOne = async (batchId) => {
+    const batch = workspaceRef.current.find((item) => item.id === batchId);
+    if (!batch || batch.cleanedAt) return batch;
+    const current = currentRef.current;
+    const protectedIds = [current.config.spreadsheetId, current.config.driveFolderId,
+      ...current.students.flatMap((student) => [student.docId, ...Object.values(student.historyByTopic || {}).map((record) => record.docId)])];
+    try {
+      const cleaned = await cleanupFeedbackBatchInDrive(googleAuth?.accessToken, batch, saveBatch, protectedIds);
+      if (cleaned.cleanedAt) setAwaitingBriskBatchId((id) => id === batchId ? '' : id);
+      return cleaned;
+    } catch (cause) {
+      const preserved = { ...workspaceRef.current.find((item) => item.id === batchId), cleanupError: cause.message || '임시 자료를 정리하지 못했습니다.' };
+      saveBatch(preserved);
+      return preserved;
+    }
+  };
+  const cleanupCompleted = () => run('완료한 묶음 폴더 정리 중', async () => {
+    if (!googleAuth?.accessToken) throw new Error('구글 로그인 후 정리해 주세요.');
+    const batches = workspaceRef.current.filter((batch) => isFeedbackBatchComplete(batch) && !batch.cleanedAt);
+    let cleaned = 0;
+    for (const batch of batches) if ((await cleanupOne(batch.id))?.cleanedAt) cleaned++;
+    setMessage(`완료 묶음 ${cleaned}개를 휴지통으로 정리했습니다.${batches.length > cleaned ? ` ${batches.length - cleaned}개는 보관했습니다. 해당 묶음의 정리 안내를 확인해 주세요.` : ' 학생 글과 전송한 피드백은 학급 데이터에 그대로 남습니다.'}`);
+  });
+  const retryCleanup = () => run('임시 자료 정리 중', async () => {
+    const cleaned = await cleanupOne(activeBatchId);
+    setMessage(cleaned?.cleanedAt ? '완료한 묶음 폴더와 임시 독스를 휴지통으로 정리했습니다.' : cleaned?.cleanupError ? '임시 자료를 모두 정리하지 못했습니다. 정리 안내를 확인해 주세요.' : '전송을 마친 학생의 임시 독스를 정리했습니다. 나머지 문서는 전송이 끝날 때까지 보관합니다.');
+  });
   const sendEntries = (entries) => run('확인한 피드백 전송 중', async () => {
     const batchId = activeBatch.id;
     let sent = 0; let failed = 0;
@@ -172,7 +202,11 @@ export function BatchFeedbackWorkspace({ topic, students, config, googleAuth, on
         updateEntry(batchId, entry.id, { sentAt: new Date().toISOString(), sendError: '' }); sent++;
       } catch (err) { failed++; updateEntry(batchId, entry.id, { sendError: err.message }); }
     }
-    setMessage(`${sent}명에게 피드백을 전송했습니다.${failed ? ` ${failed}명은 전송하지 못했습니다. 학생별 안내를 확인해 주세요.` : ' 학생은 공책에서 조언을 읽고 고쳐 쓸 수 있습니다.'}`);
+    const cleaned = sent > 0 ? await cleanupOne(batchId) : null;
+    const cleanupMessage = cleaned?.cleanupError ? ' 피드백은 저장됐지만 임시 자료 정리는 일부 끝나지 않았습니다. 다시 정리할 수 있습니다.'
+      : cleaned?.cleanedAt ? ' 묶음 폴더와 임시 독스를 휴지통으로 정리했습니다.'
+      : cleaned ? ' 전송한 학생의 임시 독스를 정리했습니다. 나머지 문서는 보관합니다.' : '';
+    setMessage(`${sent}명에게 피드백을 전송했습니다.${failed ? ` ${failed}명은 전송하지 못했습니다. 학생별 안내를 확인해 주세요.` : ' 학생은 공책에서 조언을 읽고 고쳐 쓸 수 있습니다.'}${cleanupMessage}`);
     const next = workspaceRef.current.find((item) => item.id === batchId)?.entries.find((entry) => !entry.sentAt);
     if (next) onSelectStudent(next.number);
   });
@@ -206,23 +240,26 @@ export function BatchFeedbackWorkspace({ topic, students, config, googleAuth, on
   const selectedRecord = recordFor(selectedStudentNumber);
   return children({
     topic, googleAuth, workspace, activeBatch, activeEntry, activeStale, criteriaChanged, candidates, chosen,
-    busy, message, error, storageError, copyFallback, reviewedEntries, selectedRecord, awaitingBriskBatchId,
+    busy, message, error, storageError, copyFallback, reviewedEntries, selectedRecord, awaitingBriskBatchId, completedBatches,
     selectionFor, toggleCandidate, selectWaiting: () => setSelectedNumbers(null), clearSelection: () => setSelectedNumbers([]),
-    prepare, importFeedback, sendEntries, editActive, updateEntry, copyText, openBrisk,
+    prepare, importFeedback, sendEntries, editActive, updateEntry, copyText, openBrisk, cleanupCompleted, retryCleanup,
     selectBatch: (id) => { setActiveBatchId(id); const batch = workspaceRef.current.find((item) => item.id === id); if (batch?.entries[0]) onSelectStudent(batch.entries[0].number); }
   });
 }
 
 export default function BatchFeedbackPanel({ model }) {
   const { topic, workspace, activeBatch, activeEntry, activeStale, criteriaChanged, chosen, selectedRecord,
-    busy, message, error, storageError, copyFallback, reviewedEntries, awaitingBriskBatchId,
-    prepare, importFeedback, sendEntries, editActive, updateEntry, copyText, openBrisk, selectBatch } = model;
+    busy, message, error, storageError, copyFallback, reviewedEntries, awaitingBriskBatchId, completedBatches,
+    prepare, importFeedback, sendEntries, editActive, updateEntry, copyText, openBrisk, cleanupCompleted, retryCleanup, selectBatch } = model;
 
   return (
     <section className="sketch-card bg-white p-4 sm:p-5" aria-label="묶음 피드백">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div><h2 className="font-bold text-[#1B4332]">묶음 피드백</h2><p className="text-sm text-[#64748B]">대상 선택 → 폴더 준비 → Brisk 일괄 첨삭 → 돌아와 확인·전송</p></div>
-        <button type="button" className={buttonClass} onClick={() => copyText(activeBatch?.prompt || buildFeedbackPrompt(topic, topic.feedbackCriteria))}><Copy aria-hidden="true" className="w-4 h-4" />기준 복사</button>
+        <div className="flex flex-wrap gap-2">
+          {completedBatches.length > 0 && <button type="button" className={buttonClass} disabled={Boolean(busy) || !model.googleAuth?.accessToken} onClick={cleanupCompleted}><Trash2 aria-hidden="true" className="w-4 h-4" />완료 묶음 폴더 {completedBatches.length}개 정리</button>}
+          <button type="button" className={buttonClass} onClick={() => copyText(activeBatch?.prompt || buildFeedbackPrompt(topic, topic.feedbackCriteria))}><Copy aria-hidden="true" className="w-4 h-4" />기준 복사</button>
+        </div>
       </div>
       <div className="mt-4 space-y-5">
         <div className="rounded-xl border border-[#D8F3DC] bg-[#F2F9F5] p-4 space-y-3">
@@ -240,22 +277,24 @@ export default function BatchFeedbackPanel({ model }) {
           </select></label></details>}
           {activeBatch && <>
             <p className="text-sm font-bold text-[#475569]">{activeBatch.label} · {activeBatch.entries.length}명 · 전송 {activeBatch.entries.filter((entry) => entry.sentAt).length}명</p>
+            {activeBatch.cleanedAt && <p role="status" className="rounded-xl bg-[#F2F9F5] p-4 text-sm text-[#1B4332]">전송과 임시 자료 정리가 끝난 묶음입니다. 폴더와 묶음용 독스는 Drive 휴지통으로 옮겼고, 학생 글과 전송한 조언은 그대로 보관합니다.</p>}
+            {activeBatch.cleanupError && <div className="rounded-xl bg-[#FFFBEB] p-3 space-y-2"><p role="alert" className="text-sm whitespace-pre-wrap text-[#92400E]">피드백은 전송됐지만 임시 자료 정리가 남았습니다.<br />{activeBatch.cleanupError}</p><button type="button" className={buttonClass} disabled={Boolean(busy) || !model.googleAuth?.accessToken} onClick={retryCleanup}>임시 자료 정리 다시 시도</button></div>}
             {criteriaChanged && <p className="text-sm text-[#92400E] rounded-xl bg-[#FFFBEB] p-3">현재 주제 기준이 변경되었습니다. 이 묶음의 ‘기준 복사’는 준비 당시 기준을 사용합니다.</p>}
-            <div className="flex flex-wrap gap-2">
+            {!activeBatch.cleanedAt && <div className="flex flex-wrap gap-2">
               {activeBatch.folderUrl && <a className={buttonClass} href={activeBatch.folderUrl} target="_blank" rel="noopener noreferrer"><ExternalLink aria-hidden="true" className="w-4 h-4" />묶음 폴더 열기</a>}
               {activeBatch.entries.some((entry) => entry.prepared) && <a className={buttonClass} href={BRISK_BATCH_FEEDBACK_URL} target="_blank" rel="noopener noreferrer" aria-disabled={Boolean(busy)} onClick={(event) => { if (busy) event.preventDefault(); else openBrisk(); }}><ExternalLink aria-hidden="true" className="w-4 h-4" />Brisk 일괄 첨삭 열기</a>}
               {activeBatch.entries.some((entry) => !entry.prepared) && <button type="button" className={buttonClass} disabled={Boolean(busy)} onClick={() => prepare(activeBatch)}>준비 실패·중단 문서 다시 준비</button>}
               <button type="button" className={buttonClass} disabled={Boolean(busy) || !activeBatch.entries.some((entry) => entry.prepared && !entry.sentAt)} onClick={() => importFeedback()}><RefreshCw aria-hidden="true" className="w-4 h-4" />전체 첨삭 다시 확인</button>
-            </div>
-            <div className="rounded-xl bg-[#F8FAFC] p-4 text-sm text-[#475569] space-y-2">
+            </div>}
+            {!activeBatch.cleanedAt && <div className="rounded-xl bg-[#F8FAFC] p-4 text-sm text-[#475569] space-y-2">
               <p><b>Brisk 언어 설정:</b> 피드백 생성 단계에서 <b>Korean / 한국어</b>를 선택하고, 복사된 기준을 피드백 요청란에 붙여 넣어 주세요. 쓰담은 Brisk의 언어 선택을 직접 바꿀 수 없습니다.</p>
               <p><b>가져오기:</b> Brisk에서 결과를 검토하고 Google Docs에 삽입한 뒤 쓰담으로 돌아오면 묶음 전체를 자동으로 확인합니다. 쓰담에서 학생별로 ‘피드백 입력’을 누를 필요는 없습니다.</p>
               {awaitingBriskBatchId === activeBatch.id && <p role="status" className="font-bold text-[#1B4332]">Brisk 작업 후 돌아오면 자동으로 가져옵니다.</p>}
               <a href="https://help.briskteaching.com/hc/en-us/articles/40848467709716-How-can-I-give-feedback-to-multiple-students-at-once" target="_blank" rel="noopener noreferrer" className="text-xs underline">Brisk 공식 일괄 첨삭 안내</a>
-            </div>
+            </div>}
             <div>
               {activeEntry && <div className="min-w-0 rounded-2xl border border-[#CBD5E1] p-4 space-y-4">
-                <div className="flex flex-wrap gap-2 items-center justify-between"><h3 className="font-bold text-[#1B4332]">{activeEntry.name} · {activeEntry.pieceTitle || '제목 없음'}</h3>{activeEntry.docUrl && <a href={activeEntry.docUrl} target="_blank" rel="noopener noreferrer" className="text-sm underline min-h-11 flex items-center">이 제출본 독스 열기</a>}</div>
+                <div className="flex flex-wrap gap-2 items-center justify-between"><h3 className="font-bold text-[#1B4332]">{activeEntry.name} · {activeEntry.pieceTitle || '제목 없음'}</h3>{activeEntry.docTrashedAt ? <span className="text-xs text-[#64748B]">전송 완료 · 임시 독스 정리됨</span> : activeEntry.docUrl && <a href={activeEntry.docUrl} target="_blank" rel="noopener noreferrer" className="text-sm underline min-h-11 flex items-center">이 제출본 독스 열기</a>}</div>
                 <details open><summary className="cursor-pointer font-bold text-sm py-2">피드백 대상 · {activeEntry.round}차 제출본</summary><div className="max-h-80 overflow-y-auto whitespace-pre-wrap break-words rounded-xl bg-[#FBFBF9] border border-[#E2E8F0] p-4 text-base leading-8">{activeEntry.text}</div></details>
                 {activeStale && <p role="alert" className="text-sm text-[#92400E] bg-[#FFFBEB] rounded-xl p-3">학생이 제출을 회수하거나 새 글을 제출했거나, 이미 다른 경로로 피드백을 받았습니다. 이 제출본의 피드백은 전송할 수 없습니다. 최신 글을 확인해 주세요.</p>}
                 {[activeEntry.error, activeEntry.importError, activeEntry.sendError].filter(Boolean).map((text, index) => <p key={index} role="alert" className="text-sm text-[#B91C1C] whitespace-pre-wrap break-words">{text}</p>)}
@@ -281,7 +320,7 @@ export default function BatchFeedbackPanel({ model }) {
         {error && <p role="alert" className="text-sm text-[#B91C1C] whitespace-pre-wrap break-words">{error}</p>}
         {copyFallback && <label className="block text-sm font-bold">복사할 피드백 요청문<textarea readOnly className={`${fieldClass} mt-1`} rows={6} value={copyFallback} onFocus={(event) => event.target.select()} /></label>}
         {storageError && <p role="alert" className="text-sm text-[#B91C1C]">{storageError}</p>}
-        <p className="text-xs text-[#64748B]">묶음 작업 기록·검토 중인 조언은 현재 브라우저에 자동 저장되고, 준비한 독스는 내 Drive에 보관됩니다. 전송한 조언과 주제별 기준은 학급 데이터에 저장됩니다.</p>
+        <p className="text-xs text-[#64748B]">피드백을 학생에게 전송·저장하면 해당 임시 독스를 정리하고, 모두 전송한 묶음의 폴더도 Drive 휴지통으로 옮깁니다. 가져오기만 한 조언과 미전송 문서는 보관합니다. 학생 글과 전송한 피드백은 학급 데이터에 남습니다.</p>
       </div>
     </section>
   );

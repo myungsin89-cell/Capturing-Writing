@@ -66,6 +66,57 @@ export function isFeedbackCandidate(record) {
   return Boolean(record && SUBMITTED.has(record.status) && getSubmissionSnapshot(record).text.trim());
 }
 
+// Keep the teacher-approved edition separate from later personal revisions.
+export function getCompletedWriting(record = {}) {
+  const saved = record.completedWriting;
+  if (saved && String(saved.text || '').trim()) {
+    return { pieceTitle: String(saved.pieceTitle || ''), text: String(saved.text), completedAt: saved.completedAt || '' };
+  }
+  if (record.status !== 'FINAL_COMPLETED') return null;
+  const latest = getSubmissionSnapshot(record);
+  return latest.text.trim()
+    ? { pieceTitle: latest.pieceTitle, text: latest.text, completedAt: record.updatedAtIso || '' }
+    : null;
+}
+
+export function preserveCompletedWriting(record = {}) {
+  const completedWriting = getCompletedWriting(record);
+  return completedWriting ? { ...record, completedWriting } : record;
+}
+
+// Upgrade existing completed notebooks while the teacher has write access.
+// Old relays preserve unknown fields, so later private saves retain this edition.
+export function preserveStudentCompletedWritings(student) {
+  let changed = false;
+  const upgrade = (record) => {
+    if (record?.status !== 'FINAL_COMPLETED' || record.completedWriting?.text?.trim()) return record;
+    const next = preserveCompletedWriting(record);
+    if (next !== record) changed = true;
+    return next;
+  };
+  const next = upgrade(student);
+  const historyByTopic = Object.fromEntries(Object.entries(student.historyByTopic || {})
+    .map(([id, record]) => [id, upgrade(record)]));
+  return changed ? { ...next, historyByTopic, updatedAtIso: nextRecordTimestamp([student]) } : student;
+}
+
+export function getClassCompletedWritings(state, classId, topicId, viewerNumber) {
+  const legacyClassId = state.classes?.[0]?.id || state.config?.activeClassId || '';
+  const inClass = (item) => String(item.classId || legacyClassId) === String(classId);
+  const classTopics = (state.topics || []).filter(inClass);
+  if (!classTopics.some((topic) => String(topic.id) === String(topicId))) {
+    throw new Error('글쓰기 주제를 찾을 수 없습니다.');
+  }
+  const activeTopic = classTopics.find((topic) => topic.isActive) || classTopics[0];
+  return (state.students || []).filter((student) => inClass(student) &&
+    String(student.number).trim() !== String(viewerNumber).trim()).flatMap((student) => {
+    const record = String(activeTopic?.id) === String(topicId)
+      ? student : student.historyByTopic?.[topicId] || {};
+    const writing = getCompletedWriting(record);
+    return writing ? [{ number: String(student.number), name: String(student.name || ''), ...writing }] : [];
+  }).sort((a, b) => a.number.localeCompare(b.number, 'ko', { numeric: true }));
+}
+
 export function isMatchingSubmission(record, entry) {
   return isFeedbackCandidate(record) &&
     String(record.number) === String(entry.number) &&
@@ -75,6 +126,10 @@ export function isMatchingSubmission(record, entry) {
 
 export function hasFeedbackContent(entry) {
   return Boolean(entry.note?.trim() || entry.comments?.some((item) => item.comment?.trim()));
+}
+
+export function isFeedbackBatchComplete(batch) {
+  return Boolean(batch?.entries?.length && batch.entries.every((entry) => entry.sentAt && hasFeedbackContent(entry)));
 }
 
 export function mergeImportedFeedback(current = {}, imported = {}) {
@@ -125,6 +180,13 @@ export function updateWritingFeedbackRecord(record = {}, {
     feedbackItems: feedbackItems !== undefined ? nextFeedbackItems : record.feedbackItems,
     updatedAtIso: updatedAtIso || record.updatedAtIso
   };
+  if (status === 'FINAL_COMPLETED') {
+    const latest = getSubmissionSnapshot(record);
+    if (latest.text.trim()) nextRecord.completedWriting = {
+      pieceTitle: latest.pieceTitle, text: latest.text,
+      completedAt: updatedAtIso || record.updatedAtIso || ''
+    };
+  }
   if (Array.isArray(record.draftHistory) && record.draftHistory.length > 0 &&
       (teacherNote !== undefined || feedbackItems !== undefined)) {
     nextRecord.draftHistory = record.draftHistory.map((draft, index, all) => index === all.length - 1

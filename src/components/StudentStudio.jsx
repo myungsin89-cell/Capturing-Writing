@@ -3,6 +3,7 @@ import useStudentDraft from '../hooks/useStudentDraft';
 import useStudentFeedbackPanel from '../hooks/useStudentFeedbackPanel';
 import { getDraftBase, getDraftOwner } from '../utils/studentDraftStorage';
 import DraftRecoveryDialog from './DraftRecoveryDialog';
+import FriendNotebooks from './FriendNotebooks';
 import {
   HandDrawnNotebookLogo,
   HandDrawnPencilIcon,
@@ -48,7 +49,8 @@ export default function StudentStudio({
   onLogoutStudent,
   onSubmitStage,
   onUnsubmitStage,
-  onAddQuestion
+  onAddQuestion,
+  onLoadCompletedWritings
 }) {
   const [loginNumber, setLoginNumber] = useState('');
   const [loginName, setLoginName] = useState('');
@@ -63,6 +65,7 @@ export default function StudentStudio({
 
   // null이면 [내 글쓰기 책장] 화면, 값이 있으면 해당 [주제 공책 글쓰기] 화면!
   const [openedTopicId, setOpenedTopicId] = useState(null);
+  const [isFriendsOpen, setIsFriendsOpen] = useState(false);
 
   // 오른쪽 첨삭 메모 클릭 시 왼쪽 본문에서 형광펜으로 보여줄 문장
   const [highlightedQuote, setHighlightedQuote] = useState('');
@@ -94,6 +97,7 @@ export default function StudentStudio({
 
   useEffect(() => {
     setIsSubmissionAccepted(false);
+    setIsFriendsOpen(false);
   }, [openedTopicId]);
 
   // 특정 주제에 대한 이 학생의 글 데이터 가져오기 헬퍼
@@ -205,7 +209,7 @@ export default function StudentStudio({
       document.fonts?.removeEventListener('loadingdone', resize);
       window.removeEventListener('resize', resize);
     };
-  }, [editorText, openedTopicId, viewingPageIdx, highlightedQuote, showGreenText]);
+  }, [editorText, openedTopicId, viewingPageIdx, highlightedQuote, showGreenText, isFriendsOpen]);
 
   const currentWritingStage = Math.max(1, draftPages.length + 1);
 
@@ -583,6 +587,8 @@ export default function StudentStudio({
   // ============================================================================
   // 화면 3: 책장에서 선택한 주제의 『와이드 글쓰기 공책 화면』
   // ============================================================================
+  if (isFriendsOpen) return <FriendNotebooks key={selectedTopic.id} topic={selectedTopic}
+    onLoad={onLoadCompletedWritings} onClose={() => setIsFriendsOpen(false)} />;
   const isClassLocked = Boolean(selectedTopic?.classLocked);
   const isFinalCompleted = isFinalWritingStatus(topicStudentData?.status);
   const isTeacherLocked = (Boolean(topicStudentData?.locked) || isSubmissionAccepted) && !isRecalled && !(isFinalCompleted && isEditingCompleted);
@@ -707,6 +713,12 @@ export default function StudentStudio({
               )}
             </div>
           </details>
+          {!isTeacherPreview && (
+            <button type="button" className="student-text-button" onClick={() => {
+              if (draft.flush()) setIsFriendsOpen(true);
+              else showToast('아직 기기에 저장되지 않았어요. 지금 글을 먼저 복사하거나 파일로 보관해 주세요.');
+            }}><BookOpen className="w-4 h-4" aria-hidden="true" />친구 완성 글 보기</button>
+          )}
           {!isTeacherPreview && (
             <button type="button" onClick={openQuestion} className="student-text-button">선생님께 질문</button>
           )}
