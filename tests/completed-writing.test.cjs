@@ -21,10 +21,48 @@ test('친구 공책에는 해당 학급·주제의 완성 작품만 최소 필�
   };
   const list = getClassCompletedWritings(state, 'A', 'NOW', '1');
   assert.deepEqual(list.map((writing) => writing.number), ['2', '5']);
-  assert.deepEqual(Object.keys(list[0]).sort(), ['number', 'name', 'pieceTitle', 'text', 'completedAt'].sort());
+  assert.deepEqual(Object.keys(list[0]).sort(), ['number', 'name', 'pieceTitle', 'text', 'completedAt', 'stars'].sort());
   assert.equal(list[0].text, '  첫 문단\n\n두 번째 문단\n');
   assert.deepEqual(getClassCompletedWritings(state, 'A', 'PAST', '1').map((item) => item.text), ['지난 완성 글']);
   assert.throws(() => getClassCompletedWritings(state, 'A', 'OTHER', '1'), /주제/);
+});
+
+test('별은 선택 사항이며 새 완성 처리마다 교사가 고른 0~3개만 승인본에 저장한다', async () => {
+  const { updateWritingFeedbackRecord, getCompletedWriting } = await helper;
+  for (const stars of [0, 1, 2, 3, -1, 4, 1.5]) {
+    const next = updateWritingFeedbackRecord(finished({ status: 'REVISION_SUBMITTED' }), { status: 'FINAL_COMPLETED', completionStars: stars });
+    assert.equal(getCompletedWriting(next).stars, [0, 1, 2, 3].includes(stars) ? stars : 0);
+  }
+  const previouslyAwarded = updateWritingFeedbackRecord(finished(), { status: 'FINAL_COMPLETED', completionStars: 3 });
+  assert.equal(getCompletedWriting(updateWritingFeedbackRecord(previouslyAwarded, { status: 'FINAL_COMPLETED' })).stars, 0);
+});
+
+test('별만 바꾸면 개인 수정은 공개하지 않고 승인본·완성 시점·잠금 상태를 유지한다', async () => {
+  const { updateWritingFeedbackRecord, updateCompletedWritingStars, getCompletedWriting, isCompletedResubmission } = await helper;
+  const approved = updateWritingFeedbackRecord(finished(), { status: 'FINAL_COMPLETED', completionStars: 1, updatedAtIso: 'approved' });
+  const personal = { ...approved, pieceTitle: '개인 수정 제목', draftHistory: [{ text: '혼자 다듬는 중' }] };
+  const awarded = updateCompletedWritingStars(personal, 3, 'stars-updated');
+  assert.equal(getCompletedWriting(awarded).text, getCompletedWriting(approved).text);
+  assert.equal(getCompletedWriting(awarded).completedAt, 'approved');
+  assert.equal(getCompletedWriting(awarded).stars, 3);
+  assert.equal(awarded.status, 'FINAL_COMPLETED');
+  assert.equal(awarded.locked, personal.locked);
+  const submitted = { ...awarded, status: 'REVISION_SUBMITTED' };
+  assert.equal(isCompletedResubmission(submitted), true);
+  assert.equal(getCompletedWriting(submitted).stars, 3);
+  assert.equal(updateCompletedWritingStars(submitted, 2, 'bad'), null);
+  assert.equal(isCompletedResubmission({ status: 'REVISION_SUBMITTED', draft1: '초안' }), false);
+});
+
+test('이전 중계기가 승인본의 별 필드를 생략해도 별을 복원하고 새 주제에는 섞지 않는다', async () => {
+  const { getCompletedWriting } = await helper;
+  const { transitionStudentToNewTopic } = await transition;
+  const student = finished({ completionStars: 2, completedWriting: { text: '승인 본문', pieceTitle: '승인 제목', completedAt: 'approved' } });
+  assert.equal(getCompletedWriting(student).stars, 2);
+  const next = transitionStudentToNewTopic(student, { previousTopicId: 'OLD', classId: 'A' });
+  assert.equal(next.completionStars, undefined);
+  assert.equal(getCompletedWriting(next), null);
+  assert.equal(getCompletedWriting(next.historyByTopic.OLD).stars, 2);
 });
 
 test('완성 처리 시 승인 본문을 보관하고 개인 수정·첨삭 요청 중에도 이전 완성본을 공개한다', async () => {

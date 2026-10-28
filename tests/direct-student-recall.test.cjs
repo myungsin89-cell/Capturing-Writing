@@ -144,7 +144,7 @@ test('시트 직결 학생 API에서도 완성본 저장과 첨삭 요청을 구
     topics: [{ id: 'TOPIC_A', classId: 'CLASS_A', title: '나의 하루', isActive: true, classLocked: true }],
     students: [{
       classId: 'CLASS_A', number: '1', name: '가학생', status: 'FINAL_COMPLETED', locked: true,
-      pieceTitle: '완성한 글', draft1: '최종 완성 글',
+      pieceTitle: '완성한 글', draft1: '최종 완성 글', completionStars: 2,
       draftHistory: [{ round: 1, label: '1차 글', text: '최종 완성 글', pieceTitle: '완성한 글' }],
       historyByTopic: {}, updatedAtIso: '2026-10-27T00:00:00.000Z'
     }],
@@ -184,7 +184,7 @@ test('시트 직결 학생 API에서도 완성본 저장과 첨삭 요청을 구
   const selfSaved = await service.callDirectSheetStudentApi({
     action: 'submitStage', spreadsheetId, sessionToken, topicId: 'TOPIC_A', stage: 2,
     pieceTitle: '완성한 글 (더 다듬음)', text: '완성 후 더 다듬은 글', allowRevision: true,
-    keepFinalCompleted: true
+    keepFinalCompleted: true, completionStars: 3
   });
 
   assert.equal(selfSaved.ok, true);
@@ -192,6 +192,7 @@ test('시트 직결 학생 API에서도 완성본 저장과 첨삭 요청을 구
   assert.equal(selfSaved.student.draftHistory.length, 2);
   assert.equal(selfSaved.student.draftHistory[1].text, '완성 후 더 다듬은 글');
   assert.equal(selfSaved.student.completedWriting.text, '최종 완성 글');
+  assert.equal(selfSaved.student.completedWriting.stars, 2, 'student payload cannot change awarded stars');
 
   const feedbackRequested = await service.callDirectSheetStudentApi({
     action: 'submitStage', spreadsheetId, sessionToken, topicId: 'TOPIC_A', stage: 3,
@@ -202,6 +203,7 @@ test('시트 직결 학생 API에서도 완성본 저장과 첨삭 요청을 구
   assert.equal(feedbackRequested.student.status, 'REVISION_SUBMITTED');
   assert.equal(feedbackRequested.student.draftHistory.length, 3);
   assert.equal(feedbackRequested.student.completedWriting.text, '최종 완성 글');
+  assert.equal(feedbackRequested.student.completedWriting.stars, 2);
 });
 
 test('시트 직결 친구 공책 API도 세션·학급·주제와 승인본 공개 범위를 확인한다', async (t) => {
@@ -221,7 +223,7 @@ test('시트 직결 친구 공책 API도 세션·학급·주제와 승인본 공
   const payload = { action: 'studentCompletedWritings', spreadsheetId: 'sheet', sessionToken: login.sessionToken, topicId: 'NOW' };
   const result = await service.callDirectSheetStudentApi(payload);
   assert.equal(result.ok, true);
-  assert.deepEqual(result.writings, [{ number: '2', name: '친구', pieceTitle: '승인 제목', text: '  승인 본문\n\n문단', completedAt: 'approved' }]);
+  assert.deepEqual(result.writings, [{ number: '2', name: '친구', pieceTitle: '승인 제목', text: '  승인 본문\n\n문단', completedAt: 'approved', stars: 0 }]);
   assert.equal((await service.callDirectSheetStudentApi({ ...payload, topicId: 'OLD' })).writings[0].text, '지난 완성 글');
   assert.equal((await service.callDirectSheetStudentApi({ ...payload, topicId: 'OTHER' })).ok, false);
   assert.equal((await service.callDirectSheetStudentApi({ ...payload, sessionToken: '' })).ok, false);

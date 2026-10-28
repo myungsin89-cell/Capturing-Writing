@@ -66,17 +66,34 @@ export function isFeedbackCandidate(record) {
   return Boolean(record && SUBMITTED.has(record.status) && getSubmissionSnapshot(record).text.trim());
 }
 
+export function normalizeCompletionStars(value) {
+  const number = Number(value);
+  return Number.isInteger(number) && number >= 0 && number <= 3 ? number : 0;
+}
+
 // Keep the teacher-approved edition separate from later personal revisions.
 export function getCompletedWriting(record = {}) {
   const saved = record.completedWriting;
   if (saved && String(saved.text || '').trim()) {
-    return { pieceTitle: String(saved.pieceTitle || ''), text: String(saved.text), completedAt: saved.completedAt || '' };
+    return { pieceTitle: String(saved.pieceTitle || ''), text: String(saved.text), completedAt: saved.completedAt || '', stars: normalizeCompletionStars(saved.stars ?? record.completionStars) };
   }
   if (record.status !== 'FINAL_COMPLETED') return null;
   const latest = getSubmissionSnapshot(record);
   return latest.text.trim()
-    ? { pieceTitle: latest.pieceTitle, text: latest.text, completedAt: record.updatedAtIso || '' }
+    ? { pieceTitle: latest.pieceTitle, text: latest.text, completedAt: record.updatedAtIso || '', stars: normalizeCompletionStars(record.completionStars) }
     : null;
+}
+
+export function isCompletedResubmission(record) {
+  return isFeedbackCandidate(record) && Boolean(getCompletedWriting(record));
+}
+
+export function updateCompletedWritingStars(record, stars, updatedAtIso) {
+  const approved = getCompletedWriting(record);
+  if (record?.status !== 'FINAL_COMPLETED' || !approved) return null;
+  const count = normalizeCompletionStars(stars);
+  // Never publish a student's personal edits while only changing the award.
+  return { ...record, completedWriting: { ...approved, stars: count }, completionStars: count, updatedAtIso };
 }
 
 export function preserveCompletedWriting(record = {}) {
@@ -169,7 +186,8 @@ export function updateWritingFeedbackRecord(record = {}, {
   locked,
   teacherNote,
   feedbackItems,
-  updatedAtIso
+  updatedAtIso,
+  completionStars = 0
 }) {
   const nextFeedbackItems = Array.isArray(feedbackItems) ? feedbackItems : [];
   const nextRecord = {
@@ -184,8 +202,9 @@ export function updateWritingFeedbackRecord(record = {}, {
     const latest = getSubmissionSnapshot(record);
     if (latest.text.trim()) nextRecord.completedWriting = {
       pieceTitle: latest.pieceTitle, text: latest.text,
-      completedAt: updatedAtIso || record.updatedAtIso || ''
+      completedAt: updatedAtIso || record.updatedAtIso || '', stars: normalizeCompletionStars(completionStars)
     };
+    nextRecord.completionStars = normalizeCompletionStars(completionStars);
   }
   if (Array.isArray(record.draftHistory) && record.draftHistory.length > 0 &&
       (teacherNote !== undefined || feedbackItems !== undefined)) {

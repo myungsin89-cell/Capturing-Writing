@@ -159,7 +159,7 @@ test('친구 공책 API는 로그인한 학급·주제의 승인본만 반환하
   const login = context.studentLoginV2({ spreadsheetId: 'spreadsheet-id-1234567890', classId: 'CLASS_A', accessKey: 'class-secret', number: '1', name: '가학생' });
   const stateContext = context.readAppStateV2_('spreadsheet-id-1234567890');
   const friend = stateContext.state.students[1];
-  Object.assign(friend, { status: 'FINAL_COMPLETED', pieceTitle: '완성 제목', draft1: '  완성 글\n\n다음 문단', teacherNote: '비공개 첨삭' });
+  Object.assign(friend, { status: 'FINAL_COMPLETED', pieceTitle: '완성 제목', draft1: '  완성 글\n\n다음 문단', teacherNote: '비공개 첨삭', completionStars: 2 });
   stateContext.state.students.push({ ...friend, classId: 'OTHER', number: '3' });
   stateContext.state.topics.push({ id: 'PAST', classId: 'CLASS_A' }, { id: 'OTHER_TOPIC', classId: 'OTHER' });
   friend.historyByTopic.PAST = { status: 'FINAL_COMPLETED', pieceTitle: '지난 글', draft1: '지난 본문' };
@@ -168,6 +168,7 @@ test('친구 공책 API는 로그인한 학급·주제의 승인본만 반환하
   let result = context.studentCompletedWritingsV2(payload);
   assert.equal(result.writings.length, 1);
   assert.equal(result.writings[0].text, '  완성 글\n\n다음 문단');
+  assert.equal(result.writings[0].stars, 2);
   assert.equal(result.writings[0].teacherNote, undefined);
   assert.equal(result.writings[0].draftHistory, undefined);
   const revised = context.appendDraftRevisionV2_(friend, '개인 수정', '새 제목', '', 'new', { keepFinalCompleted: true });
@@ -175,6 +176,7 @@ test('친구 공책 API는 로그인한 학급·주제의 승인본만 반환하
   context.writeAppStateV2_(stateContext);
   result = context.studentCompletedWritingsV2(payload);
   assert.equal(result.writings[0].text, '  완성 글\n\n다음 문단');
+  assert.equal(result.writings[0].stars, 2, 'private revision keeps the approved award');
   assert.equal(context.studentCompletedWritingsV2({ ...payload, topicId: 'PAST' }).writings[0].text, '지난 본문');
   assert.throws(() => context.studentCompletedWritingsV2({ ...payload, topicId: 'OTHER_TOPIC' }), /주제/);
   assert.throws(() => context.studentCompletedWritingsV2({ ...payload, sessionToken: 'bad' }), /만료/);
@@ -438,7 +440,8 @@ test('완료 학생이 혼자 수정해 저장하면 FINAL_COMPLETED 상태를 �
     pieceTitle: '완성할 글 (직접 수정)',
     text: '학생이 혼자 더 다듬은 글',
     allowRevision: true,
-    keepFinalCompleted: true
+    keepFinalCompleted: true,
+    completionStars: 3
   });
 
   assert.equal(selfSaved.ok, true);
@@ -446,6 +449,7 @@ test('완료 학생이 혼자 수정해 저장하면 FINAL_COMPLETED 상태를 �
   assert.equal(selfSaved.student.locked, true);
   assert.equal(selfSaved.student.draftHistory.length, 2);
   assert.equal(selfSaved.student.draftHistory[1].text, '학생이 혼자 더 다듬은 글');
+  assert.equal(selfSaved.student.completedWriting.stars, 0, 'student cannot award stars through submission');
 });
 
 test('작품 제목이 없는 학생 글은 제출하지 않는다', () => {

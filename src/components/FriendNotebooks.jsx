@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, BookOpen, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import CompletionStars from './CompletionStars';
 
 export default function FriendNotebooks({ topic, onLoad, onClose, isTeacher = false, returnToBookshelf = false }) {
   const [writings, setWritings] = useState([]);
@@ -39,6 +40,7 @@ export default function FriendNotebooks({ topic, onLoad, onClose, isTeacher = fa
               <span className="text-xs text-[#64748B]">{index + 1} / {writings.length}</span>
             </div>
             <article className="manuscript-paper lined-paper rounded-2xl border border-[#CBD5E1] text-[#1E293B]">
+              {selected.stars > 0 && <div className="text-center mb-3"><CompletionStars value={selected.stars} /></div>}
               <h2 className="manuscript-title">{selected.pieceTitle || '제목 없는 글'}</h2>
               <div className="manuscript-name text-[#475569]">{selected.name}</div>
               <div className="manuscript-body">{selected.text}</div>
@@ -56,6 +58,7 @@ export default function FriendNotebooks({ topic, onLoad, onClose, isTeacher = fa
                 <button type="button" key={writing.number} onClick={() => setSelectedNumber(writing.number)} className="sketch-card bg-white p-6 text-left hover:border-[#2D6A4F] transition space-y-3 min-w-0">
                   <BookOpen className="w-5 h-5 text-[#64748B]" aria-hidden="true" />
                   <h2 className="font-editorial-serif text-lg text-[#1E293B] break-words">{writing.pieceTitle || '제목 없는 글'}</h2>
+                  <CompletionStars value={writing.stars} />
                   <p className="text-sm text-[#64748B]">{writing.number}번 {writing.name}</p>
                 </button>
               ))}</div>}

@@ -414,15 +414,20 @@ function completedWritingV2_(record) {
   record = record || {};
   var saved = record.completedWriting;
   if (saved && String(saved.text || '').trim()) {
-    return { pieceTitle: String(saved.pieceTitle || ''), text: String(saved.text), completedAt: saved.completedAt || '' };
+    return { pieceTitle: String(saved.pieceTitle || ''), text: String(saved.text), completedAt: saved.completedAt || '', stars: completionStarsV2_(saved.stars != null ? saved.stars : record.completionStars) };
   }
   if (record.status !== 'FINAL_COMPLETED') return null;
   var history = getDraftHistoryV2_(record);
   var latest = history[history.length - 1];
   return latest ? {
     pieceTitle: String(record.pieceTitle || latest.pieceTitle || ''),
-    text: String(latest.text), completedAt: record.updatedAtIso || ''
+    text: String(latest.text), completedAt: record.updatedAtIso || '', stars: completionStarsV2_(record.completionStars)
   } : null;
+}
+
+function completionStarsV2_(value) {
+  var count = Number(value);
+  return count === Math.floor(count) && count >= 0 && count <= 3 ? count : 0;
 }
 
 function studentCompletedWritingsV2(payload) {
@@ -448,7 +453,7 @@ function studentCompletedWritingsV2(payload) {
     var writing = completedWritingV2_(record);
     if (writing) writings.push({
       number: String(student.number), name: String(student.name || ''),
-      pieceTitle: writing.pieceTitle, text: writing.text, completedAt: writing.completedAt
+      pieceTitle: writing.pieceTitle, text: writing.text, completedAt: writing.completedAt, stars: writing.stars
     });
   });
   writings.sort(function(a, b) { return a.number.localeCompare(b.number, 'ko', { numeric: true }); });

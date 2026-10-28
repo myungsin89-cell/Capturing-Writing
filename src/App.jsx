@@ -26,7 +26,7 @@ import { shouldAutoSaveTeacherState } from './utils/syncPolicy';
 import {
   getFeedbackTopicRecord, isMatchingSubmission, nextRecordTimestamp,
   normalizeFeedbackCriteria, updateWritingFeedbackRecord, wasBatchFeedbackDelivered,
-  preserveCompletedWriting, getClassCompletedWritings, isFeedbackCandidate, preserveStudentCompletedWritings
+  preserveCompletedWriting, getClassCompletedWritings, isFeedbackCandidate, preserveStudentCompletedWritings, updateCompletedWritingStars
 } from './utils/batchFeedback';
 import { getUsableDraftHistory, repairLeakedDraftHistory, transitionStudentToNewTopic } from './utils/topicTransition.js';
 import { createStudentRequestGuard } from './utils/studentRequestGuard.js';
@@ -865,7 +865,7 @@ export default function App() {
     ) };
     const payload = { action: 'studentCompletedWritings', topicId, sessionToken: studentSession?.token || '' };
     const result = await callGasApi(payload);
-    if (result?.ok) return result;
+    if (result?.ok && result.writings?.every((writing) => Number.isInteger(writing.stars))) return result;
     // Older relays do not have this read-only action yet. Authenticate through
     // the existing direct login path rather than asking teachers to redeploy.
     if (gasUrl && activeStudent) {
@@ -1120,34 +1120,42 @@ export default function App() {
     status,
     locked,
     teacherNote,
-    feedbackItems
+    feedbackItems,
+    completionStars,
+    starsOnly = false
   }) => {
     const targetSt = students.find(
       (s) => belongsToActiveClass(s) && String(s.number) === String(number)
     );
     const targetTopicId = topicId || config.activeTopicId || '';
     const isActiveTopic = targetTopicId === (config.activeTopicId || 'TOPIC_1');
-    const targetTopicData = isActiveTopic
-      ? targetSt
-      : { ...targetSt, ...(targetSt?.historyByTopic?.[targetTopicId] || {}) };
+    const targetTopicData = getFeedbackTopicRecord(targetSt, { id: targetTopicId }, config.activeTopicId || 'TOPIC_1');
+    if (!targetSt) return { ok: false, error: '학생 정보를 찾을 수 없습니다.' };
     if (status === 'FEEDBACK_DONE' && !isFeedbackCandidate(targetTopicData)) {
       return { ok: false, error: '학생이 첨삭을 요청한 제출본에만 첨삭을 보낼 수 있습니다.' };
+    }
+    if (status === 'FINAL_COMPLETED' && !isFeedbackCandidate(targetTopicData)) {
+      return { ok: false, error: '학생이 제출한 최신 글을 확인한 뒤 완성 처리해 주세요.' };
     }
     const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
     // 학생 기기의 시간이 교사 기기보다 앞서 있어도, 첨삭 완료가 해당 제출보다 최신이 되게 합니다.
     const nowIso = nextRecordTimestamp([targetSt, targetTopicData]);
+    if (starsOnly && (targetTopicData?.status !== 'FINAL_COMPLETED' || !updateCompletedWritingStars(targetTopicData, completionStars, nowIso))) {
+      return { ok: false, error: '완성 상태가 바뀌었습니다. 학생의 최신 제출본을 확인해 주세요.' };
+    }
 
     setStudents((prev) =>
       prev.map((st) => {
         if (!belongsToActiveClass(st) || String(st.number) !== String(number)) return st;
         if (!isActiveTopic) {
           const previousTopicData = st.historyByTopic?.[targetTopicId] || {};
-          const nextTopicData = updateWritingFeedbackRecord(previousTopicData, {
+          const nextTopicData = starsOnly ? updateCompletedWritingStars(previousTopicData, completionStars, nowIso) || previousTopicData : updateWritingFeedbackRecord(previousTopicData, {
             status,
             locked,
             teacherNote,
             feedbackItems,
-            updatedAtIso: nowIso
+            updatedAtIso: nowIso,
+            completionStars
           });
           return {
             ...st,
@@ -1158,16 +1166,17 @@ export default function App() {
             updatedAtIso: nowIso
           };
         }
+        if (starsOnly) return updateCompletedWritingStars(st, completionStars, nowIso) || st;
         return updateWritingFeedbackRecord({
           ...st,
           updatedAt: `오늘 ${now}`,
-        }, { status, locked, teacherNote, feedbackItems, updatedAtIso: nowIso });
+        }, { status, locked, teacherNote, feedbackItems, updatedAtIso: nowIso, completionStars });
       })
     );
 
     // 교사가 [첨삭 완료 및 학생에게 전송] 시, 학생 구글 독스의 이전 Brisk 표/댓글을 자동으로 깨끗하게 청소!
     const targetDocId = targetTopicData?.docId || targetSt?.docId;
-    if (status === 'FEEDBACK_DONE' && googleAuth?.accessToken && targetDocId) {
+    if (!starsOnly && status === 'FEEDBACK_DONE' && googleAuth?.accessToken && targetDocId) {
       const latestText = getLatestDraftText(targetTopicData);
       const targetTopicTitle = topics.find((topic) => topic.id === targetTopicId)?.title || '';
       resetGoogleDocWithStudentText(googleAuth.accessToken, targetDocId, latestText, {
@@ -1175,7 +1184,7 @@ export default function App() {
         authorName: targetSt.name || ''
       });
     }
-
+    return { ok: true };
   };
 
   const handleBatchDeadline = async ({ lockAll, topicId }) => {

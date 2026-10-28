@@ -13,14 +13,14 @@ import {
 } from './HandDrawnIcons';
 import { X, ChevronLeft, ChevronRight, Eye } from 'lucide-react';
 
-export default function GrowthDiffView({ student, topicTitle = '' }) {
+export default function GrowthDiffView({ student, topicTitle = '', initialLeftIndex = 0 }) {
   const pages = useMemo(() => getStudentDraftPages(student), [student]);
   const pieceTitle = student?.pieceTitle || topicTitle || '제목 없음';
   const authorName = student?.name || '';
   const isFinalCompleted = isFinalWritingStatus(student?.status);
 
   // 비교할 왼쪽(이전 차수) 페이지 인덱스와 오른쪽(이후 차수) 페이지 인덱스
-  const [leftIdx, setLeftIdx] = useState(0);
+  const [leftIdx, setLeftIdx] = useState(initialLeftIndex);
   const [rightIdx, setRightIdx] = useState(() => Math.max(0, pages.length - 1));
 
   // [핵심] 녹색 박스 없이 '추가된 표현 초록 글씨 표시' ON/OFF 토글
@@ -28,13 +28,13 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
 
   useEffect(() => {
     if (pages.length >= 2) {
-      setLeftIdx(0);
+      setLeftIdx(Math.min(initialLeftIndex, pages.length - 2));
       setRightIdx(pages.length - 1);
     } else {
       setLeftIdx(0);
       setRightIdx(0);
     }
-  }, [student?.number, pages.length]);
+  }, [student?.number, pages.length, initialLeftIndex]);
 
   const leftPage = pages[leftIdx] || { round: 1, label: '1차 글', text: '' };
   const rightPage = pages[rightIdx] || leftPage;
@@ -65,7 +65,7 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
         {leftPage.text && (
           <div className="mt-4 p-6 rounded-2xl lined-paper border border-[#CBD5E1] text-left font-editorial-serif text-lg sm:text-[19.5px] text-[#1E293B] whitespace-pre-wrap leading-8">
             <div className="mb-8">
-              <div className="text-center text-xl sm:text-2xl font-bold">{pieceTitle}</div>
+              <div className="text-center text-xl sm:text-2xl font-bold">{leftPage.pieceTitle || pieceTitle}</div>
               <div className="mt-3 text-right text-sm sm:text-base font-semibold text-[#475569]">
                 {authorName}
               </div>
@@ -226,7 +226,7 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
 
           <div className="flex-1 lined-paper p-5 sm:p-6 rounded-2xl border border-[#E2E8F0] font-editorial-serif text-lg sm:text-[19.5px] leading-8 text-[#334155] whitespace-pre-wrap">
             <div className="mb-8">
-              <div className="text-center text-xl sm:text-2xl font-bold">{pieceTitle}</div>
+              <div className="text-center text-xl sm:text-2xl font-bold">{rightPage.pieceTitle || pieceTitle}</div>
               <div className="mt-3 text-right text-sm sm:text-base font-semibold text-[#475569]">
                 {authorName}
               </div>
@@ -279,7 +279,7 @@ export default function GrowthDiffView({ student, topicTitle = '' }) {
 /**
  * 화면 전체(96vw)를 시원하게 쓰는 초대형 나란히 비교 모달
  */
-export function GrowthDiffModal({ isOpen, onClose, student, topicTitle = '' }) {
+export function GrowthDiffModal({ isOpen, onClose, student, topicTitle = '', initialLeftIndex = 0, comparisonTitle = '글쓰기 성장 비교' }) {
   if (!isOpen || !student) return null;
 
   return (
@@ -291,7 +291,7 @@ export function GrowthDiffModal({ isOpen, onClose, student, topicTitle = '' }) {
               {student.number}번 {student.name}
             </span>
             <h2 className="text-lg sm:text-xl font-bold text-[#1B4332]">
-              글쓰기 성장 비교
+              {comparisonTitle}
             </h2>
           </div>
           <button
@@ -304,7 +304,7 @@ export function GrowthDiffModal({ isOpen, onClose, student, topicTitle = '' }) {
           </button>
         </div>
 
-        <GrowthDiffView student={student} topicTitle={topicTitle} />
+        <GrowthDiffView student={student} topicTitle={topicTitle} initialLeftIndex={initialLeftIndex} />
       </div>
     </div>
   );

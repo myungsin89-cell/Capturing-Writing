@@ -1,6 +1,10 @@
 // Disposable browser contexts and intercepted responses; never uses a live account.
 const assert = require('node:assert/strict');
 const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const fs = require('node:fs');
+const vm = require('node:vm');
+const gas = vm.createContext({ console });
+vm.runInContext(fs.readFileSync(require('node:path').join(__dirname, '../gas/Code.gs'), 'utf8'), gas);
 
 async function main() {
   const browser = await chromium.launch({ headless: true });
@@ -35,6 +39,14 @@ async function main() {
         if (['studentLogin', 'studentRefresh'].includes(payload.action)) {
           const own = state.students.find((item) => item.number === String(payload.number || payload.sessionToken?.split('-').at(-1) || '1'));
           return reply({ ok: true, student: own, topics, config: state.config, sessionToken: `opaque-${own.number}`, questions: [] });
+        }
+        if (payload.action === 'submitStage') {
+          const own = state.students.find((item) => item.number === payload.sessionToken.split('-').at(-1));
+          const nowIso = new Date().toISOString();
+          Object.assign(own, JSON.parse(JSON.stringify(gas.appendDraftRevisionV2_(own, payload.text, payload.pieceTitle, '', nowIso, {
+            keepFinalCompleted: payload.keepFinalCompleted, isRecallUpdate: payload.isRecallUpdate
+          }))));
+          return reply({ ok: true, student: own });
         }
         return reply({ ok: false, error: '지원하지 않는 요청입니다.' });
       }
@@ -95,6 +107,15 @@ async function main() {
     Object.assign(state.students[2], delivered);
     await select('나학생');
     assert.equal(await teacher.getByRole('button', { name: '수정 다시 열기', exact: true }).count(), 0);
+    const starPicker = teacher.getByRole('group', { name: '완성 작품 별 선택', exact: true });
+    const starChoice = (page, count) => page.getByRole('radio', { name: count ? `별 ${count}개` : '별 없이', exact: true }).locator('..');
+    await starChoice(teacher, 3).hover();
+    assert.equal(await starPicker.locator('.completion-star-choice svg[fill="currentColor"]').count(), 3);
+    await starChoice(teacher, 2).click();
+    if (process.env.FRIEND_NOTEBOOK_QA_DIR) await starPicker.screenshot({ path: require('node:path').join(process.env.FRIEND_NOTEBOOK_QA_DIR, 'teacher-completion-stars.png') });
+    await teacher.getByRole('button', { name: '별 변경 저장', exact: true }).click();
+    Object.assign(state.students[1], await teacher.evaluate(() => JSON.parse(localStorage.getItem('sseudam_students_v7')).find((item) => item.number === '2')));
+    assert.equal(state.students[1].completedWriting.stars, 2);
 
     const student = await makeContext(true);
     await student.goto('http://127.0.0.1:5173/?student=1&sheetId=QA_SHEET&classId=A&accessKey=key');
@@ -111,6 +132,8 @@ async function main() {
     await student.getByRole('textbox', { name: '작품 제목', exact: true }).fill('보존할 내 제목');
     await student.getByRole('textbox', { name: '글 본문', exact: true }).fill('내가 작성하던 문단\n\n이어 쓰는 중');
     await student.getByRole('button', { name: '친구 완성 글 보기', exact: true }).click();
+    const awardedCard = student.getByRole('button').filter({ has: student.getByRole('heading', { name: '친구 완성 제목', exact: true }) });
+    await awardedCard.getByRole('img', { name: '선생님이 준 별 2개', exact: true }).waitFor();
     await student.getByRole('heading', { name: '친구 완성 제목', exact: true }).click();
     const notebook = student.getByRole('region', { name: '친구 완성 공책', exact: true });
     assert.equal(await notebook.locator('.manuscript-body').textContent(), '  첫 문단\n\n두 번째 문단\n');
@@ -152,8 +175,10 @@ async function main() {
     await completed.getByRole('heading', { name: '함께 쓰는 주제', exact: true }).click();
     const completionDialog = completed.getByRole('dialog', { name: '나학생 학생, 작품을 완성했어요!', exact: true });
     await completionDialog.waitFor({ state: 'visible' });
+    assert.equal(await completionDialog.getByRole('img', { name: '선생님이 준 별 2개', exact: true }).count(), 1);
     await completionDialog.getByRole('button', { name: '내 작품 보기', exact: true }).click();
     assert.equal(await completed.locator('.student-writing-status').textContent(), '최종 완성');
+    assert.equal(await completed.locator('.student-notebook-toolbar').getByRole('img', { name: '선생님이 준 별 2개', exact: true }).count(), 1);
     assert.equal(await completed.getByRole('heading', { name: '나학생 학생, 작품을 완성했어요!', exact: true }).count(), 0);
     assert.equal(await completed.getByRole('region', { name: '선생님의 글쓰기 안내', exact: true }).isVisible(), true);
     assert.equal(await completed.getByRole('button', { name: '친구 완성 글 보기', exact: true }).isVisible(), true);
@@ -215,8 +240,57 @@ async function main() {
     await feedbackStudent.keyboard.press('Escape');
     assert.equal(await panel.isVisible(), false);
     assert.equal(await feedbackStudent.evaluate(() => document.body.style.overflow), '');
+    // Saving privately preserves publication; resubmitting moves the student back to review.
+    if (await completed.getByRole('button', { name: '더 다듬기', exact: true }).isVisible()) await completed.getByRole('button', { name: '더 다듬기', exact: true }).click();
+    await completed.getByRole('textbox', { name: '글 본문', exact: true }).fill('혼자 먼저 다듬은 글');
+    await completed.getByRole('button', { name: '저장만 하기', exact: true }).click();
+    await completed.getByRole('button', { name: '더 다듬기', exact: true }).waitFor();
+    assert.equal(state.students[1].status, 'FINAL_COMPLETED');
+    assert.equal(state.students[1].completedWriting.stars, 2);
+    assert.equal(state.students[1].completedWriting.text, '  첫 문단\n\n두 번째 문단\n');
+    await completed.getByRole('button', { name: '더 다듬기', exact: true }).click();
+    await completed.getByRole('textbox', { name: '작품 제목', exact: true }).fill('다시 완성한 작품');
+    await completed.getByRole('textbox', { name: '글 본문', exact: true }).fill('더 정성껏 고쳐 다시 제출하는 글');
+    assert.equal(await completed.getByRole('textbox', { name: '글 본문', exact: true }).inputValue(), '더 정성껏 고쳐 다시 제출하는 글');
+    await completed.getByRole('button', { name: '선생님께 다시 제출하기', exact: true }).click();
+    await completed.getByText('다듬은 작품을 선생님께 다시 제출했어요. 확인을 기다려 주세요.', { exact: true }).waitFor();
+    assert.equal(state.students[1].status, 'REVISION_SUBMITTED');
+    assert.equal(state.students[1].draftHistory.at(-1).text, '더 정성껏 고쳐 다시 제출하는 글', 'resubmission sends the latest editor content');
+    assert.equal(state.students[1].completedWriting.stars, 2);
+    assert.equal(state.students[1].completedWriting.text, '  첫 문단\n\n두 번째 문단\n');
+    const returnTeacher = await makeContext();
+    await returnTeacher.goto('http://127.0.0.1:5173');
+    await returnTeacher.getByRole('heading', { name: '함께 쓰는 주제', exact: true }).click();
+    const returnedRow = returnTeacher.getByRole('region', { name: '우리 반 학생 명단', exact: true }).getByRole('button').filter({ hasText: '나학생' });
+    assert.match(await returnedRow.textContent(), /완성 후 재제출/);
+    await returnedRow.click();
+    assert.equal(await returnTeacher.getByRole('radio', { name: '별 없이', exact: true }).isChecked(), true);
+    await returnTeacher.getByRole('button', { name: '이전 완성본과 수정본 비교하기', exact: true }).click();
+    await returnTeacher.getByRole('heading', { name: '이전 완성본과 수정본 비교', exact: true }).waitFor();
+    await returnTeacher.getByRole('button', { name: '닫기', exact: true }).click();
+    await starChoice(returnTeacher, 3).click();
+    await returnTeacher.getByRole('button', { name: '최종 완성 처리', exact: true }).click();
+    await returnTeacher.getByRole('button', { name: '별 변경 저장', exact: true }).waitFor();
+    Object.assign(state.students[1], await returnTeacher.evaluate(() => JSON.parse(localStorage.getItem('sseudam_students_v7')).find((item) => item.number === '2')));
+    assert.equal(state.students[1].completedWriting.stars, 3);
+    assert.equal(state.students[1].completedWriting.text, '더 정성껏 고쳐 다시 제출하는 글');
+    await completed.reload();
+    await completed.getByRole('heading', { name: '함께 쓰는 주제', exact: true }).click();
+    await completionDialog.getByRole('img', { name: '선생님이 준 별 3개', exact: true }).waitFor();
+    if (process.env.FRIEND_NOTEBOOK_QA_DIR) await completionDialog.screenshot({ path: require('node:path').join(process.env.FRIEND_NOTEBOOK_QA_DIR, 'completion-stars-modal.png') });
+    await completionDialog.getByRole('button', { name: '내 작품 보기', exact: true }).click();
+    await returnTeacher.getByRole('region', { name: '우리 반 학생 명단', exact: true }).getByRole('button').filter({ hasText: '마학생' }).click();
+    assert.equal(await returnTeacher.getByRole('radio', { name: '별 없이', exact: true }).isChecked(), true);
+    await returnTeacher.mouse.move(0, 0);
+    assert.equal(await returnTeacher.getByRole('group', { name: '완성 작품 별 선택', exact: true }).locator('svg[fill="currentColor"]').count(), 0);
+    await returnTeacher.setViewportSize({ width: 390, height: 1000 });
+    assert.ok(await returnTeacher.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await returnTeacher.getByRole('button', { name: '최종 완성 처리', exact: true }).click();
+    await returnTeacher.getByRole('button', { name: '별 변경 저장', exact: true }).waitFor();
+    const withoutStars = await returnTeacher.evaluate(() => JSON.parse(localStorage.getItem('sseudam_students_v7')).find((item) => item.number === '5'));
+    assert.equal(withoutStars.completedWriting.stars, 0, 'completion without stars remains supported');
     assert.deepEqual(errors, []);
-    console.log('PASS: exact teacher/student highlight positions, compact guidance, one-time completion modal, top actions, automatic new feedback, desktop side panel, mobile drawer with focus and Escape, teacher/student galleries, draft preservation, mobile overflow.');
+    console.log('PASS: optional stars, hover/selection, award edits, modal/header/card stars, private save preservation, completed resubmission badge, approved-edition comparison, new approval and award, no-star completion, exact highlights, existing notebook flows.');
   } finally {
     for (const context of contexts) await context.close();
     await browser.close();

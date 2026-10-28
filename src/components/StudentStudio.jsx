@@ -8,6 +8,8 @@ import DraftRecoveryDialog from './DraftRecoveryDialog';
 import FriendNotebooks from './FriendNotebooks';
 import CompletionDialog from './CompletionDialog';
 import StudentFeedbackSurface from './StudentFeedbackSurface';
+import CompletionStars from './CompletionStars';
+import { getCompletedWriting, isCompletedResubmission } from '../utils/batchFeedback';
 import { resolveTextSelection, textFingerprint } from '../utils/textSelection';
 import {
   HandDrawnNotebookLogo,
@@ -125,6 +127,7 @@ export default function StudentStudio({
       teacherNote: past?.teacherNote || '',
       feedbackItems: past?.feedbackItems || [],
       completedWriting: past?.completedWriting || null,
+      completionStars: past?.completionStars || 0,
       locked: Boolean(past?.locked) || Boolean(topic.classLocked)
     };
   };
@@ -163,6 +166,7 @@ export default function StudentStudio({
 
   const feedbackItems = activeFeedbackPage?.feedbackItems || [];
   const feedbackTeacherNote = activeFeedbackPage?.teacherNote || '';
+  const approvedStudentWriting = getCompletedWriting(topicStudentData || {});
   const [isFeedbackOpen, setFeedbackOpen] = useStudentFeedbackPanel(
     getDraftOwner({ spreadsheetId: config.spreadsheetId || '', classId: config.activeClassId || '', student: currentStudent, topicId: openedTopicId }),
     topicStudentData?.status === 'FEEDBACK_DONE' && feedbackPages.length > 0,
@@ -170,7 +174,7 @@ export default function StudentStudio({
   );
   const [isCompletionOpen, openCompletion, closeCompletion] = useCompletionNotice(
     getDraftOwner({ spreadsheetId: config.spreadsheetId || '', classId: config.activeClassId || '', student: currentStudent, topicId: openedTopicId }),
-    isFinalWritingStatus(topicStudentData?.status), topicStudentData?.completedWriting?.completedAt,
+    isFinalWritingStatus(topicStudentData?.status), `${topicStudentData?.completedWriting?.completedAt || 'legacy-completed'}${approvedStudentWriting?.stars ? `:stars:${approvedStudentWriting.stars}` : ''}`,
     !isTeacherPreview && !isFriendsOpen
   );
   const isWideFeedback = useFeedbackDrawer(isFeedbackOpen && Boolean(selectedTopic) && !isFriendsOpen && !isCompletionOpen, () => {
@@ -333,16 +337,16 @@ export default function StudentStudio({
       );
       if (result?.ok) {
         draft.submitted(submittedDraft);
-        setIsSubmissionAccepted(true);
+        setIsSubmissionAccepted(!(wasEditingCompleted && !isFeedbackRequest));
         setIsRecalled(false);
         setIsEditingCompleted(false);
         showToast(
           wasRecalled
             ? '수정한 글을 다시 선생님께 제출했어요!'
             : isFeedbackRequest
-            ? '선생님께 첨삭을 요청했어요!'
+            ? '다듬은 작품을 선생님께 다시 제출했어요!'
             : wasEditingCompleted
-            ? '수정한 글을 최종 완성본에 저장했어요!'
+            ? '수정한 내용을 내 공책에 저장했어요. 공개된 완성본과 별은 그대로예요.'
             : '선생님께 내 글을 제출했어요!'
         );
       } else {
@@ -549,6 +553,7 @@ export default function StudentStudio({
                         <span className="px-2.5 py-0.5 rounded-full bg-[#D8F3DC] border border-[#2D6A4F] text-[#1B4332] text-xs font-bold flex items-center gap-1">
                           <Check className="w-3.5 h-3.5" aria-hidden="true" />
                           <span>최종 완성</span>
+                          <CompletionStars value={getCompletedWriting(stData || {})?.stars} />
                         </span>
                       ) : tp.isActive ? (
                         <span className="px-2.5 py-0.5 rounded-full bg-[#1B4332] text-white text-xs font-bold">
@@ -654,6 +659,7 @@ export default function StudentStudio({
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
   const startCompletedRevision = () => {
+    setIsSubmissionAccepted(false);
     setIsEditingCompleted(true);
     resumeWriting();
   };
@@ -673,8 +679,9 @@ export default function StudentStudio({
     else showToast('아직 기기에 저장되지 않았어요. 지금 글을 먼저 복사하거나 파일로 보관해 주세요.');
   };
   const waitingForFeedback = isSubmissionAccepted || isSubmittedWritingStatus(topicStudentData?.status);
+  const isCompletedReturn = isCompletedResubmission(topicStudentData);
   const writingStatus = isFinalCompleted ? '최종 완성' : isRecalled ? '회수 후 수정 중'
-    : waitingForFeedback ? '첨삭 요청 · 선생님 확인 대기'
+    : waitingForFeedback ? isCompletedReturn ? '완성 후 재제출 · 선생님 확인 대기' : '첨삭 요청 · 선생님 확인 대기'
     : isClassLocked ? '글쓰기 마감' : topicStudentData?.status === 'FEEDBACK_DONE' ? '첨삭 도착 · 고쳐 쓰는 중' : '글 쓰는 중';
 
   return (
@@ -704,6 +711,7 @@ export default function StudentStudio({
           <span className="text-xs text-[#64748B]">{currentStudent.number}번 {currentStudent.name}</span>
           {isFinalCompleted ? <button type="button" className="student-writing-status is-complete" onClick={openCompletion} aria-label="최종 완성 안내 보기"><Check className="w-4 h-4" aria-hidden="true" />최종 완성{isEditingCompleted ? ' · 다듬는 중' : ''}</button>
             : <span role="status" className="student-writing-status">{writingStatus}</span>}
+          <CompletionStars value={approvedStudentWriting?.stars} />
           {isTeacherPreview && <span className="text-xs text-[#64748B]">교사 읽기 전용</span>}
         </div>
 
@@ -806,7 +814,7 @@ export default function StudentStudio({
           )}
           {isEditingCompleted && (
             <div className="student-inline-notice">
-              <span>저장만 하면 선생님께 첨삭을 요청하지 않아요.</span>
+              <span>저장만 하면 나만 고쳐 쓸 수 있어요. 다시 제출하면 선생님이 작품과 별을 다시 확인해 주세요.</span>
               <button type="button" onClick={() => setIsEditingCompleted(false)} className="student-text-button shrink-0">수정 취소</button>
             </div>
           )}
@@ -862,7 +870,7 @@ export default function StudentStudio({
               </button>
             ) : isTeacherLocked ? (
               <div className="flex items-center justify-between gap-3 flex-wrap w-full">
-                <p className="flex items-center gap-2 text-sm text-[#64748B]"><Check className="w-4 h-4" aria-hidden="true" />제출했어요. 선생님의 확인을 기다리고 있어요.</p>
+                <p className="flex items-center gap-2 text-sm text-[#64748B]"><Check className="w-4 h-4" aria-hidden="true" />{isCompletedReturn ? '다듬은 작품을 선생님께 다시 제출했어요. 확인을 기다려 주세요.' : '제출했어요. 선생님의 확인을 기다리고 있어요.'}</p>
                 {!isClassLocked && (
                   <button type="button" onClick={handleUnsubmitStage} disabled={isUnsubmitting} className="student-text-button">
                     <CornerDownLeft className="w-4 h-4" aria-hidden="true" />{isUnsubmitting ? '회수하는 중...' : '회수하고 고쳐 쓰기'}
@@ -872,15 +880,15 @@ export default function StudentStudio({
             ) : isEditingCompleted ? (
               <div className="flex items-center gap-3 flex-wrap">
                 <button type="button" onClick={() => handleStageSubmit(false)} disabled={isSubmitting} className="student-primary-button">
-                  {isSubmitting ? '저장하고 있어요...' : '수정한 내용 저장하기'}
+                  {isSubmitting ? '저장하고 있어요...' : '저장만 하기'}
                 </button>
                 <button type="button" onClick={() => handleStageSubmit(true)} disabled={isSubmitting} className="student-text-button">
-                  선생님에게 첨삭 요청
+                  선생님께 다시 제출하기
                 </button>
               </div>
             ) : (
               <button type="button" onClick={() => handleStageSubmit(false)} disabled={isSubmitting} className="student-primary-button">
-                {isSubmitting ? '제출하고 있어요...' : isRecalled ? '수정한 글 다시 제출하기' : '선생님께 제출하기'}
+                {isSubmitting ? '제출하고 있어요...' : isRecalled ? '수정한 글 다시 제출하기' : approvedStudentWriting ? '선생님께 다시 제출하기' : '선생님께 제출하기'}
               </button>
             )}
           </footer>
@@ -978,7 +986,7 @@ export default function StudentStudio({
       }} />}
 
       <GrowthDiffModal isOpen={isDiffModalOpen} onClose={() => setIsDiffModalOpen(false)} student={topicStudentData} topicTitle={selectedTopic.title} />
-      {isCompletionOpen && <CompletionDialog name={currentStudent.name} canCompare={hasRevision} onClose={closeCompletion}
+      {isCompletionOpen && <CompletionDialog name={currentStudent.name} stars={approvedStudentWriting?.stars} canCompare={hasRevision} onClose={closeCompletion}
         onFriends={() => { closeCompletion(); openFriendNotebooks(); }} onCompare={() => { closeCompletion(); setIsDiffModalOpen(true); }} />}
     </div>
   );

@@ -15,7 +15,8 @@ import StudentShareModal from './StudentShareModal';
 import BatchFeedbackPanel, { BatchFeedbackWorkspace } from './BatchFeedbackPanel';
 import FeedbackCriteriaDialog from './FeedbackCriteriaDialog';
 import FriendNotebooks from './FriendNotebooks';
-import { buildFeedbackPrompt, getSubmissionSnapshot, mergeImportedFeedback, isFeedbackCandidate, getClassCompletedWritings } from '../utils/batchFeedback';
+import CompletionStars, { CompletionStarPicker } from './CompletionStars';
+import { buildFeedbackPrompt, getSubmissionSnapshot, mergeImportedFeedback, isFeedbackCandidate, getClassCompletedWritings, getCompletedWriting, isCompletedResubmission } from '../utils/batchFeedback';
 import {
   STAGE_META,
   renderTextWithHighlight,
@@ -147,6 +148,7 @@ export default function TeacherDashboard({
   const [highlightedQuote, setHighlightedQuote] = useState('');
   // 대형 나란히 비교 모달 열림 여부
   const [isDiffModalOpen, setIsDiffModalOpen] = useState(false);
+  const [compareApprovedWriting, setCompareApprovedWriting] = useState(false);
   // 특정 학생이 쓴 모든 주제별 글 모아보기 모달
   const [portfolioStudent, setPortfolioStudent] = useState(null);
 
@@ -191,6 +193,7 @@ export default function TeacherDashboard({
   const [bookletRequest, setBookletRequest] = useState(null);
   const [isLoadingBooklet, setIsLoadingBooklet] = useState(false);
   const [completedTopicId, setCompletedTopicId] = useState(null);
+  const [completionStars, setCompletionStars] = useState(0);
   const [docSyncStatus, setDocSyncStatus] = useState('idle');
   const docPullingRef = useRef(false);
   const docContextRef = useRef(null);
@@ -231,6 +234,8 @@ export default function TeacherDashboard({
       draftHistory: past?.draftHistory || [],
       teacherNote: past?.teacherNote || '',
       feedbackItems: past?.feedbackItems || [],
+      completedWriting: past?.completedWriting || null,
+      completionStars: past?.completionStars || 0,
       docId: past?.docId || '',
       docUrl: past?.docUrl || '',
       locked: Boolean(past?.locked) || Boolean(topic.classLocked)
@@ -246,6 +251,11 @@ export default function TeacherDashboard({
   const canSendSelectedFeedback = isFeedbackCandidate(selectedStudent);
   const canFinalizeSelectedStudent =
     draftPages.length > 0 && isSubmittedWritingStatus(selectedStudent?.status);
+  const approvedWriting = getCompletedWriting(selectedStudent || {});
+  const isCompletedReturn = isCompletedResubmission(selectedStudent);
+  useEffect(() => {
+    setCompletionStars(isSelectedStudentFinal ? approvedWriting?.stars || 0 : 0);
+  }, [personalContextKey, approvedWriting?.stars, isSelectedStudentFinal]);
 
   // 이전 차수 학생에게 해주었던 첨삭 기록 모음 (2차 이상 글일 때 참고용)
   const previousFeedbackPages = draftPages
@@ -537,17 +547,24 @@ export default function TeacherDashboard({
     showToast(`${selectedStudent.name} 학생 공책으로 첨삭을 보내고 수정 모드를 열었습니다!`);
   };
 
-  const handleFinalizeWriting = () => {
+  const handleFinalizeWriting = async () => {
     if (!selectedStudent || !canFinalizeSelectedStudent) return;
-    onUpdateStudentStatus({
+    const result = await onUpdateStudentStatus({
       number: selectedStudent.number,
       topicId: currentTopic?.id || '',
       status: 'FINAL_COMPLETED',
       locked: true,
       teacherNote: feedbackNote,
-      feedbackItems: modalFeedbackItems
+      feedbackItems: modalFeedbackItems,
+      completionStars
     });
+    if (result?.ok === false) { showToast(result.error); return; }
     showToast(`${selectedStudent.name} 학생의 글을 최종 완성본으로 확정했습니다!`);
+  };
+
+  const handleSaveCompletionStars = async () => {
+    const result = await onUpdateStudentStatus({ number: selectedStudent.number, topicId: currentTopic.id, completionStars, starsOnly: true });
+    showToast(result?.ok === false ? result.error : `${selectedStudent.name} 학생의 완성 작품 별을 저장했습니다.`);
   };
 
   const parseRosterLines = (txt = '') =>
@@ -1986,6 +2003,7 @@ export default function TeacherDashboard({
                       <div className="text-[11px] text-[#64748B] truncate">
                         {textLen > 0 ? `${textLen}자 작성됨` : '작성 전'}
                       </div>
+                      <CompletionStars value={getCompletedWriting(st)?.stars} />
                     </div>
                   </div>
 
@@ -1993,7 +2011,7 @@ export default function TeacherDashboard({
                     <span
                       className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold border ${meta.badgeBg} ${meta.badgeBorder} ${meta.badgeText}`}
                     >
-                        {feedbackTab === 'batch' && selection.status ? selection.status : meta.shortLabel}
+                        {isCompletedResubmission(st) ? '완성 후 재제출' : feedbackTab === 'batch' && selection.status ? selection.status : meta.shortLabel}
                     </span>
                   </div>
                   </button>
@@ -2072,7 +2090,7 @@ export default function TeacherDashboard({
                 <div className="flex items-center gap-1.5 flex-wrap">
                   <button
                     type="button"
-                    onClick={() => setIsDiffModalOpen(true)}
+                    onClick={() => { setCompareApprovedWriting(false); setIsDiffModalOpen(true); }}
                     className="sketch-btn-secondary px-3 py-1.5 text-xs font-bold flex items-center gap-1.5"
                   >
                     <HandDrawnDiffIcon size={14} color="#1B4332" />
@@ -2661,6 +2679,12 @@ export default function TeacherDashboard({
 
               return (
                 <div className="space-y-2">
+                  {isCompletedReturn && <div role="status" className="rounded-xl border border-[#93C5FD] bg-[#EFF6FF] p-3 text-sm text-[#1E40AF] space-y-1">
+                    <p className="font-semibold">완성 후 재제출 · 더 다듬은 작품을 확인해 주세요.</p>
+                    <div className="flex items-center gap-2 text-xs">이전 완성본 {approvedWriting?.stars ? <CompletionStars value={approvedWriting.stars} /> : '· 별 없이 완성'}</div>
+                    <button type="button" onClick={() => { setCompareApprovedWriting(true); setIsDiffModalOpen(true); }} className="student-text-button">이전 완성본과 수정본 비교하기</button>
+                  </div>}
+                  {(isSelectedStudentFinal || canFinalizeSelectedStudent) && <CompletionStarPicker key={personalContextKey} value={completionStars} onChange={setCompletionStars} />}
                   {hasUnsentFeedback && canSendSelectedFeedback && (
                     <div className="text-center text-xs font-bold text-[#B45309] bg-[#FEF3C7] border border-[#FCD34D] rounded-xl py-1.5 px-3">
                       새로 작성·수정한 첨삭이 있습니다. 아래 버튼을 눌러 전송해 주세요!
@@ -2671,6 +2695,7 @@ export default function TeacherDashboard({
                       <div className="text-center text-xs font-bold text-[#1B4332] bg-[#D8F3DC] border border-[#52B788] rounded-xl py-2 px-3">
                         이 글은 최종 완성본으로 확정되어 있습니다.
                       </div>
+                      <button type="button" disabled={completionStars === (approvedWriting?.stars || 0)} onClick={handleSaveCompletionStars} className="sketch-btn-secondary min-h-11 w-full px-4 py-2 text-sm font-bold disabled:opacity-40">별 변경 저장</button>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -2714,6 +2739,8 @@ export default function TeacherDashboard({
       {/* [처음 글 · 고쳐 쓴 글 크게 비교하기] 초대형 모달 */}
       </div>
       <GrowthDiffModal
+        initialLeftIndex={compareApprovedWriting ? Math.max(0, draftPages.findLastIndex((page) => page.text === approvedWriting?.text)) : 0}
+        comparisonTitle={compareApprovedWriting ? '이전 완성본과 수정본 비교' : '글쓰기 성장 비교'}
         isOpen={isDiffModalOpen}
         onClose={() => setIsDiffModalOpen(false)}
         student={selectedStudent}
