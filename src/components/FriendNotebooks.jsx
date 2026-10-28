@@ -37,10 +37,9 @@ export default function FriendNotebooks({ topic, onLoad, onClose, isTeacher = fa
           <section aria-label={isTeacher ? '학생 완성 공책' : '친구 완성 공책'} className="notebook-card sketch-card bg-white" style={{ marginInline: 'auto' }}>
             <div className="student-paper-toolbar">
               <button type="button" className="student-text-button" onClick={() => setSelectedNumber(null)}><ArrowLeft className="w-4 h-4" aria-hidden="true" />{isTeacher ? '완성 글 목록' : '친구 글 목록'}</button>
-              <span className="text-xs text-[#64748B]">{index + 1} / {writings.length}</span>
+              <div className="flex items-center gap-3"><CompletionStars value={selected.stars} /><span className="text-xs text-[#64748B]">{index + 1} / {writings.length}</span></div>
             </div>
             <article className="manuscript-paper lined-paper rounded-2xl border border-[#CBD5E1] text-[#1E293B]">
-              {selected.stars > 0 && <div className="text-center mb-3"><CompletionStars value={selected.stars} /></div>}
               <h2 className="manuscript-title">{selected.pieceTitle || '제목 없는 글'}</h2>
               <div className="manuscript-name text-[#475569]">{selected.name}</div>
               <div className="manuscript-body">{selected.text}</div>
@@ -56,9 +55,8 @@ export default function FriendNotebooks({ topic, onLoad, onClose, isTeacher = fa
             {writings.length === 0 ? <p role="status" className="text-center py-16 text-[#64748B]">{isTeacher ? '아직 이 주제에서 완성 처리한 글이 없습니다.' : '아직 이 주제에서 완성한 친구 글이 없어요.'}</p>
               : <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">{writings.map((writing) => (
                 <button type="button" key={writing.number} onClick={() => setSelectedNumber(writing.number)} className="sketch-card bg-white p-6 text-left hover:border-[#2D6A4F] transition space-y-3 min-w-0">
-                  <BookOpen className="w-5 h-5 text-[#64748B]" aria-hidden="true" />
+                  <div className="flex items-center justify-between gap-3"><BookOpen className="w-5 h-5 text-[#64748B]" aria-hidden="true" /><CompletionStars value={writing.stars} /></div>
                   <h2 className="font-editorial-serif text-lg text-[#1E293B] break-words">{writing.pieceTitle || '제목 없는 글'}</h2>
-                  <CompletionStars value={writing.stars} />
                   <p className="text-sm text-[#64748B]">{writing.number}번 {writing.name}</p>
                 </button>
               ))}</div>}
