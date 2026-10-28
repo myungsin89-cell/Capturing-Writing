@@ -14,7 +14,8 @@ import { GrowthDiffModal } from './GrowthDiffView';
 import StudentShareModal from './StudentShareModal';
 import BatchFeedbackPanel, { BatchFeedbackWorkspace } from './BatchFeedbackPanel';
 import FeedbackCriteriaDialog from './FeedbackCriteriaDialog';
-import { buildFeedbackPrompt, getSubmissionSnapshot, mergeImportedFeedback, isFeedbackCandidate } from '../utils/batchFeedback';
+import FriendNotebooks from './FriendNotebooks';
+import { buildFeedbackPrompt, getSubmissionSnapshot, mergeImportedFeedback, isFeedbackCandidate, getClassCompletedWritings } from '../utils/batchFeedback';
 import {
   STAGE_META,
   renderTextWithHighlight,
@@ -186,6 +187,7 @@ export default function TeacherDashboard({
   const [BookletDialog, setBookletDialog] = useState(null);
   const [bookletRequest, setBookletRequest] = useState(null);
   const [isLoadingBooklet, setIsLoadingBooklet] = useState(false);
+  const [completedTopicId, setCompletedTopicId] = useState(null);
   const [docSyncStatus, setDocSyncStatus] = useState('idle');
   const docPullingRef = useRef(false);
   const docContextRef = useRef(null);
@@ -204,6 +206,8 @@ export default function TeacherDashboard({
     setFeedbackTab('individual');
     setIsCriteriaDialogOpen(false);
   }, [openedTopicId]);
+
+  useEffect(() => { setCompletedTopicId(null); }, [config.activeClassId]);
 
   const rawSelectedStudent =
     students.find((s) => String(s.number) === String(selectedStudentNumber)) ||
@@ -1239,6 +1243,13 @@ export default function TeacherDashboard({
   // ============================================================================
   // 단계 3: 선택한 학급의 『글쓰기 주제 책장』
   // ============================================================================
+  const completedTopic = topics.find((topic) => topic.id === completedTopicId);
+  if (completedTopic) return <FriendNotebooks key={`${config.activeClassId}:${completedTopic.id}`}
+    topic={completedTopic} isTeacher returnToBookshelf={!currentTopic}
+    onClose={() => setCompletedTopicId(null)}
+    onLoad={async (topicId) => ({ ok: true, writings: getClassCompletedWritings(
+      { classes, topics, students, config }, config.activeClassId, topicId, null
+    ) })} />;
   if (!currentTopic) {
     return (
       <div className="flex-1 w-full px-6 lg:px-12 py-8 space-y-6">
@@ -1355,6 +1366,7 @@ export default function TeacherDashboard({
               const stData = getStudentTopicData(rawSt, tp);
               return isSubmittedWritingStatus(stData?.status);
             }).length;
+            const completedCount = getClassCompletedWritings({ classes, topics, students, config }, config.activeClassId, tp.id, null).length;
 
             return (
               <div
@@ -1450,6 +1462,10 @@ export default function TeacherDashboard({
                     <HandDrawnArrowRightIcon size={15} color="#1B4332" />
                   </span>
                 </div>
+                <button type="button" onClick={(event) => { event.stopPropagation(); setCompletedTopicId(tp.id); }}
+                  className="sketch-btn-secondary min-h-11 px-4 py-2 ml-3 mt-3 text-sm font-bold flex items-center justify-center gap-2">
+                  <BookOpen className="w-4 h-4" aria-hidden="true" />완성 글 모음 · {completedCount}편
+                </button>
               </div>
             );
           })}
@@ -1846,6 +1862,7 @@ export default function TeacherDashboard({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
+          <button type="button" onClick={() => setCompletedTopicId(currentTopic.id)} className="sketch-btn-secondary h-11 px-3.5 text-xs sm:text-sm font-bold flex items-center gap-1.5"><BookOpen className="w-4 h-4" aria-hidden="true" /><span>완성 글 모음</span></button>
           {isClosedBookletTopic(currentTopic) && <button type="button" onClick={() => openBooklet(currentTopic)} disabled={isLoadingBooklet} className="sketch-btn-secondary h-11 px-3.5 text-xs sm:text-sm font-bold flex items-center gap-1.5 disabled:opacity-40"><Download className="w-4 h-4" /><span>{isLoadingBooklet ? '문집 준비 중...' : '주제 문집 PDF'}</span></button>}
           <button
             type="button"

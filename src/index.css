@@ -449,13 +449,54 @@ textarea.manuscript-body {
   background: #F8FAFC;
 }
 
-.student-writing-guide {
-  margin-bottom: 16px;
-  color: #64748B;
-  font-size: 13px;
+.student-learning-guide {
+  display: grid;
+  gap: 16px;
+  padding: 20px 24px;
+  border: 1px solid #CBD5E1;
+  border-radius: 16px;
+  background: #FFF;
 }
 
-.student-writing-guide > summary,
+.student-learning-guide[data-state="complete"] {
+  border-color: #8AC5A0;
+  background: #F2F9F5;
+}
+
+.student-writing-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: #EDF2F7;
+  color: #334155;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+[data-state="complete"] > .student-writing-status {
+  background: #D8F3DC;
+  color: #1B4332;
+}
+
+[data-state="waiting"] > .student-writing-status {
+  background: #FEF3C7;
+  color: #92400E;
+}
+
+.student-writing-guide {
+  display: grid;
+  gap: 8px;
+  padding: 16px;
+  border-left: 3px solid #52B788;
+  border-radius: 8px;
+  background: #F8FAFC;
+  color: #334155;
+  font-size: 15px;
+}
+
 .student-questions > summary {
   cursor: pointer;
 }
@@ -511,6 +552,7 @@ textarea.manuscript-body {
 }
 
 @media (max-width: 639px) {
+  .student-learning-guide { padding: 16px; }
   .student-toolbar-actions {
     gap: 10px;
   }

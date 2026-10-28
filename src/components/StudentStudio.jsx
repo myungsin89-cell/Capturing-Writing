@@ -17,7 +17,8 @@ import {
   renderTextWithGreenAdditions,
   getStudentDraftPages,
   getStudentFeedbackPages,
-  isFinalWritingStatus
+  isFinalWritingStatus,
+  isSubmittedWritingStatus
 } from '../utils/diffHelper';
 import {
   Send,
@@ -65,7 +66,8 @@ export default function StudentStudio({
 
   // null이면 [내 글쓰기 책장] 화면, 값이 있으면 해당 [주제 공책 글쓰기] 화면!
   const [openedTopicId, setOpenedTopicId] = useState(null);
-  const [isFriendsOpen, setIsFriendsOpen] = useState(false);
+  const [friendsTopicId, setFriendsTopicId] = useState(null);
+  const isFriendsOpen = Boolean(openedTopicId && friendsTopicId === openedTopicId);
 
   // 오른쪽 첨삭 메모 클릭 시 왼쪽 본문에서 형광펜으로 보여줄 문장
   const [highlightedQuote, setHighlightedQuote] = useState('');
@@ -93,11 +95,11 @@ export default function StudentStudio({
   // 학생은 책장부터, 교사 미리보기는 선택한 주제 공책부터 바로 보여줍니다.
   useEffect(() => {
     setOpenedTopicId(isTeacherPreview && initialTopicId ? initialTopicId : null);
+    setFriendsTopicId(null);
   }, [currentStudent?.classId, currentStudent?.number, currentStudent?.name, isTeacherPreview, initialTopicId]);
 
   useEffect(() => {
     setIsSubmissionAccepted(false);
-    setIsFriendsOpen(false);
   }, [openedTopicId]);
 
   // 특정 주제에 대한 이 학생의 글 데이터 가져오기 헬퍼
@@ -576,6 +578,11 @@ export default function StudentStudio({
                     <HandDrawnArrowRightIcon size={15} color="#1B4332" />
                   </span>
                 </div>
+                {!isTeacherPreview && <button type="button" className="student-action-button mt-3 ml-3" onClick={(event) => {
+                  event.stopPropagation();
+                  setFriendsTopicId(tp.id);
+                  setOpenedTopicId(tp.id);
+                }}><BookOpen className="w-4 h-4" aria-hidden="true" />친구 완성 글 보기</button>}
               </div>
             );
           })}
@@ -588,7 +595,7 @@ export default function StudentStudio({
   // 화면 3: 책장에서 선택한 주제의 『와이드 글쓰기 공책 화면』
   // ============================================================================
   if (isFriendsOpen) return <FriendNotebooks key={selectedTopic.id} topic={selectedTopic}
-    onLoad={onLoadCompletedWritings} onClose={() => setIsFriendsOpen(false)} />;
+    onLoad={onLoadCompletedWritings} onClose={() => setFriendsTopicId(null)} />;
   const isClassLocked = Boolean(selectedTopic?.classLocked);
   const isFinalCompleted = isFinalWritingStatus(topicStudentData?.status);
   const isTeacherLocked = (Boolean(topicStudentData?.locked) || isSubmissionAccepted) && !isRecalled && !(isFinalCompleted && isEditingCompleted);
@@ -645,6 +652,14 @@ export default function StudentStudio({
     setIsQuestionOpen(true);
     setFocusQuestionRequested(true);
   };
+  const openFriendNotebooks = () => {
+    if (draft.flush()) setFriendsTopicId(selectedTopic.id);
+    else showToast('아직 기기에 저장되지 않았어요. 지금 글을 먼저 복사하거나 파일로 보관해 주세요.');
+  };
+  const waitingForFeedback = isSubmissionAccepted || isSubmittedWritingStatus(topicStudentData?.status);
+  const writingStatus = isFinalCompleted ? '최종 완성' : isRecalled ? '회수 후 수정 중'
+    : waitingForFeedback ? '첨삭 요청 · 선생님 확인 대기'
+    : isClassLocked ? '글쓰기 마감' : topicStudentData?.status === 'FEEDBACK_DONE' ? '첨삭 도착 · 고쳐 쓰는 중' : '글 쓰는 중';
 
   return (
     <div className="student-quiet notebook-workspace flex-1 w-full px-6 lg:px-10 py-5 flex flex-col gap-5">
@@ -671,12 +686,6 @@ export default function StudentStudio({
           </button>
           <h1 className="text-base font-semibold text-[#334155]">{selectedTopic.title}</h1>
           <span className="text-xs text-[#64748B]">{currentStudent.number}번 {currentStudent.name}</span>
-          {isFinalCompleted && (
-            <span role="status" className="inline-flex items-center gap-1.5 text-sm font-medium text-[#2D6A4F]">
-              <Check className="w-4 h-4" aria-hidden="true" />
-              {isEditingCompleted ? '완성본 다듬는 중' : '최종 완성'}
-            </span>
-          )}
           {isTeacherPreview && <span className="text-xs text-[#64748B]">교사 읽기 전용</span>}
         </div>
 
@@ -686,9 +695,6 @@ export default function StudentStudio({
               <MoreHorizontal className="w-4 h-4" aria-hidden="true" />글 도구
             </summary>
             <div className="student-tools-menu">
-              <button type="button" disabled={!hasRevision} onClick={() => runTool(() => setIsDiffModalOpen(true))}>
-                <HandDrawnDiffIcon size={16} color="#64748B" />처음 글과 비교하기
-              </button>
               {prevComparisonText && prevComparisonText.trim() !== activeDisplayText.trim() && (
                 <button type="button" aria-pressed={showGreenText} onClick={() => runTool(() => {
                   setHighlightedQuote('');
@@ -714,12 +720,6 @@ export default function StudentStudio({
             </div>
           </details>
           {!isTeacherPreview && (
-            <button type="button" className="student-text-button" onClick={() => {
-              if (draft.flush()) setIsFriendsOpen(true);
-              else showToast('아직 기기에 저장되지 않았어요. 지금 글을 먼저 복사하거나 파일로 보관해 주세요.');
-            }}><BookOpen className="w-4 h-4" aria-hidden="true" />친구 완성 글 보기</button>
-          )}
-          {!isTeacherPreview && (
             <button type="button" onClick={openQuestion} className="student-text-button">선생님께 질문</button>
           )}
           <button
@@ -737,6 +737,30 @@ export default function StudentStudio({
           </button>
         </div>
       </header>
+
+      <section aria-label="글쓰기 안내와 상태" className="student-learning-guide" data-state={isFinalCompleted ? 'complete' : waitingForFeedback && !isRecalled ? 'waiting' : 'writing'}>
+        <div role="status" className="student-writing-status">
+          {isFinalCompleted && <Check className="w-5 h-5 shrink-0" aria-hidden="true" />}
+          <span>{writingStatus}{isFinalCompleted && isEditingCompleted ? ' · 더 다듬는 중' : ''}</span>
+        </div>
+        {isFinalCompleted ? <div className="space-y-1.5">
+          <h2 className="text-lg sm:text-xl font-bold text-[#1B4332]">{currentStudent.name} 학생, 나만의 작품을 완성했어요!</h2>
+          <p className="text-sm sm:text-base leading-relaxed text-[#475569]">끝까지 글을 쓰고 다듬은 노력이 멋져요. 처음 쓴 글과 비교하며 달라진 점을 찾아보고, 친구들의 작품도 감상해 보세요.</p>
+        </div> : <p className="text-sm leading-relaxed text-[#475569]">{isRecalled ? '글을 고친 뒤 다시 제출해 주세요.'
+          : waitingForFeedback ? '글을 잘 제출했어요. 선생님의 조언을 기다리는 동안 친구들의 완성 글도 읽어 보세요.'
+          : isClassLocked ? '이 주제의 글쓰기가 마감되었어요. 쓴 글을 읽거나 친구들의 작품을 감상할 수 있어요.'
+          : topicStudentData?.status === 'FEEDBACK_DONE' ? '첨삭 보기에서 선생님의 조언을 읽고, 글을 한 번 더 다듬어 보세요.'
+          : '선생님의 안내를 읽고, 나의 생각을 글로 표현해 보세요.'}</p>}
+        {selectedTopic.prompt && <section className="student-writing-guide" aria-label="선생님의 글쓰기 안내">
+          <h2 className="font-bold text-[#1B4332] flex items-center gap-2"><BookOpen className="w-4 h-4 shrink-0" aria-hidden="true" />선생님의 글쓰기 안내</h2>
+          <p className="whitespace-pre-wrap leading-relaxed break-words">{selectedTopic.prompt}</p>
+        </section>}
+        <div className="flex flex-wrap items-center gap-3">
+          {!isTeacherPreview && <button type="button" className="student-action-button" onClick={openFriendNotebooks}><BookOpen className="w-4 h-4" aria-hidden="true" />친구 완성 글 보기</button>}
+          <button type="button" className="student-action-button" disabled={!hasRevision} onClick={() => setIsDiffModalOpen(true)}><HandDrawnDiffIcon size={16} color="#475569" />처음 글과 비교하기</button>
+          {!hasRevision && <span className="text-xs text-[#64748B]">두 번째 글을 제출하면 처음 글과 비교할 수 있어요.</span>}
+        </div>
+      </section>
 
       {draft.error && !isTeacherPreview && (
         <div role="alert" className="rounded-xl border border-[#FCA5A5] bg-[#FEF2F2] p-4 text-sm text-[#991B1B] space-y-3">
@@ -781,12 +805,6 @@ export default function StudentStudio({
             </div>
           </div>
 
-          {selectedTopic.prompt && (
-            <details className="student-writing-guide">
-              <summary>글쓰기 안내</summary>
-              <p className="mt-2 whitespace-pre-wrap leading-relaxed">{selectedTopic.prompt}</p>
-            </details>
-          )}
           {restoredBannerMsg && (
             <div className="student-inline-notice">
               <span>{restoredBannerMsg}</span>

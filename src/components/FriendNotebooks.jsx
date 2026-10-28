@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowLeft, BookOpen, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 
-export default function FriendNotebooks({ topic, onLoad, onClose }) {
+export default function FriendNotebooks({ topic, onLoad, onClose, isTeacher = false, returnToBookshelf = false }) {
   const [writings, setWritings] = useState([]);
   const [selectedNumber, setSelectedNumber] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -25,17 +25,17 @@ export default function FriendNotebooks({ topic, onLoad, onClose }) {
     <div className="student-quiet notebook-workspace flex-1 w-full px-6 lg:px-10 py-5 space-y-5">
       <header className="student-notebook-toolbar">
         <div className="flex items-center gap-3 flex-wrap min-w-0">
-          <button type="button" className="student-text-button" onClick={onClose}><ArrowLeft className="w-4 h-4" aria-hidden="true" />내 노트로 돌아가기</button>
-          <h1 className="text-base font-semibold text-[#334155]">{topic.title} · 친구 완성 글</h1>
+          <button type="button" className="student-action-button" onClick={onClose}><ArrowLeft className="w-4 h-4" aria-hidden="true" />{isTeacher ? returnToBookshelf ? '주제 책장으로 돌아가기' : '학생 관리로 돌아가기' : '내 노트로 돌아가기'}</button>
+          <h1 className="text-lg font-bold text-[#1B4332]">{topic.title} · {isTeacher ? '완성 글 모음' : '친구 완성 글'}</h1>
         </div>
         <button type="button" disabled={loading} className="student-text-button" onClick={() => setRefresh((value) => value + 1)}><RefreshCw className="w-4 h-4" aria-hidden="true" />새로고침</button>
       </header>
-      {loading ? <p role="status" className="text-center py-12 text-[#64748B]">친구들의 공책을 가져오고 있어요.</p>
+      {loading ? <p role="status" className="text-center py-12 text-[#64748B]">{isTeacher ? '완성 공책을 가져오고 있습니다.' : '친구들의 공책을 가져오고 있어요.'}</p>
         : error ? <div role="alert" className="text-center py-12 space-y-3"><p>{error}</p><button type="button" className="student-action-button" onClick={() => setRefresh((value) => value + 1)}>다시 시도</button></div>
         : selected ? (
-          <section aria-label="친구 완성 공책" className="notebook-card sketch-card bg-white" style={{ marginInline: 'auto' }}>
+          <section aria-label={isTeacher ? '학생 완성 공책' : '친구 완성 공책'} className="notebook-card sketch-card bg-white" style={{ marginInline: 'auto' }}>
             <div className="student-paper-toolbar">
-              <button type="button" className="student-text-button" onClick={() => setSelectedNumber(null)}><ArrowLeft className="w-4 h-4" aria-hidden="true" />친구 글 목록</button>
+              <button type="button" className="student-text-button" onClick={() => setSelectedNumber(null)}><ArrowLeft className="w-4 h-4" aria-hidden="true" />{isTeacher ? '완성 글 목록' : '친구 글 목록'}</button>
               <span className="text-xs text-[#64748B]">{index + 1} / {writings.length}</span>
             </div>
             <article className="manuscript-paper lined-paper rounded-2xl border border-[#CBD5E1] text-[#1E293B]">
@@ -49,9 +49,9 @@ export default function FriendNotebooks({ topic, onLoad, onClose }) {
             </footer>
           </section>
         ) : (
-          <section aria-label="친구 완성 글 목록">
-            <p className="text-sm text-[#64748B] mb-5">선생님이 완성 처리한 친구들의 글을 읽어 보세요.</p>
-            {writings.length === 0 ? <p role="status" className="text-center py-16 text-[#64748B]">아직 이 주제에서 완성한 친구 글이 없어요.</p>
+          <section aria-label={isTeacher ? '학생 완성 글 목록' : '친구 완성 글 목록'}>
+            <p className="text-sm text-[#64748B] mb-5">{isTeacher ? `이 주제에서 완성한 작품 ${writings.length}편입니다. 공책을 펼쳐 학생들의 글을 감상하세요.` : '선생님이 완성 처리한 친구들의 글을 읽어 보세요.'}</p>
+            {writings.length === 0 ? <p role="status" className="text-center py-16 text-[#64748B]">{isTeacher ? '아직 이 주제에서 완성 처리한 글이 없습니다.' : '아직 이 주제에서 완성한 친구 글이 없어요.'}</p>
               : <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">{writings.map((writing) => (
                 <button type="button" key={writing.number} onClick={() => setSelectedNumber(writing.number)} className="sketch-card bg-white p-6 text-left hover:border-[#2D6A4F] transition space-y-3 min-w-0">
                   <BookOpen className="w-5 h-5 text-[#64748B]" aria-hidden="true" />
