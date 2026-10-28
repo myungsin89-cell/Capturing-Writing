@@ -27,6 +27,7 @@ import {
 import { questionBelongsToTopic } from '../utils/questionHelper';
 import { groupTeacherRoster } from '../utils/teacherRoster';
 import { isClosedBookletTopic } from '../utils/bookletData';
+import { captureTextSelection, resolveTextSelection } from '../utils/textSelection';
 import { translateBriskTextToKorean } from '../services/googleDriveService';
 import {
   ExternalLink,
@@ -154,6 +155,8 @@ export default function TeacherDashboard({
   // 선생님이 본문 문장을 드래그했을 때만 나타나는 부분 첨삭 상태
   const [modalFeedbackItems, setModalFeedbackItems] = useState([]);
   const [draggedQuote, setDraggedQuote] = useState('');
+  const [draggedAnchor, setDraggedAnchor] = useState(null);
+  const manuscriptBodyRef = useRef(null);
   const [newFbComment, setNewFbComment] = useState('');
   const [replyTexts, setReplyTexts] = useState({});
   const [showResolvedQuestions, setShowResolvedQuestions] = useState(false);
@@ -270,6 +273,7 @@ export default function TeacherDashboard({
     personalDraftContextRef.current = personalContextKey;
     setHighlightedQuote('');
     setDraggedQuote('');
+    setDraggedAnchor(null);
     setNewFbComment('');
     setWaitingDocReturn(false);
     setShowResolvedQuestions(false);
@@ -510,16 +514,11 @@ export default function TeacherDashboard({
   const handleAddDraggedFeedback = () => {
     if (!draggedQuote.trim() || !newFbComment.trim()) return;
     const addedQuote = draggedQuote.trim();
-    setModalFeedbackItems((prev) => [
-      ...prev,
-      {
-        id: 'FB_' + Date.now(),
-        quote: addedQuote,
-        comment: newFbComment.trim()
-      }
-    ]);
-    setHighlightedQuote(addedQuote);
+    const item = { id: crypto.randomUUID(), quote: addedQuote, anchor: draggedAnchor, comment: newFbComment.trim() };
+    setModalFeedbackItems((prev) => [...prev, item]);
+    setHighlightedQuote(item);
     setDraggedQuote('');
+    setDraggedAnchor(null);
     setNewFbComment('');
     showToast('선택한 문장에 부분 첨삭 메모가 추가되었습니다!');
   };
@@ -2168,10 +2167,12 @@ export default function TeacherDashboard({
               {/* 입력·제출·교사 확인에 공통 원고 규격 적용 */}
               <div
                 onMouseUp={() => {
-                  const sel = window.getSelection()?.toString().trim();
-                  if (sel && sel.length >= 2) {
-                    setDraggedQuote(sel);
-                    setHighlightedQuote(sel);
+                  const selection = captureTextSelection(manuscriptBodyRef.current, window.getSelection(), currentStudentText);
+                  if (selection) {
+                    setDraggedQuote(selection.quote);
+                    setDraggedAnchor(selection.anchor);
+                    setHighlightedQuote(selection);
+                    window.getSelection()?.removeAllRanges();
                   }
                 }}
                 className="manuscript-paper flex-1 lined-paper rounded-2xl border border-[#CBD5E1] text-[#1E293B] select-text cursor-text"
@@ -2182,7 +2183,7 @@ export default function TeacherDashboard({
                 <div className="manuscript-name text-[#475569]">
                   {selectedStudent.name}
                 </div>
-                <div className="manuscript-body">
+                <div ref={manuscriptBodyRef} className="manuscript-body">
                   {currentStudentText ? (
                     showGreenText && prevDraftPage ? (
                       renderTextWithGreenAdditions(
@@ -2529,6 +2530,7 @@ export default function TeacherDashboard({
                       type="button"
                       onClick={() => {
                         setDraggedQuote('');
+                        setDraggedAnchor(null);
                         setHighlightedQuote('');
                       }}
                       className="text-xs font-bold text-[#92400E] hover:underline cursor-pointer"
@@ -2603,14 +2605,17 @@ export default function TeacherDashboard({
                   <div className="space-y-2 max-h-44 overflow-y-auto pr-1">
                     {modalFeedbackItems.map((item) => {
                       const isHighlighted =
-                        highlightedQuote && highlightedQuote === item.quote;
+                        Boolean(item.id && highlightedQuote?.id === item.id);
 
                       return (
                         <div
                           key={item.id}
                           onClick={() => {
                             if (!item.quote) return;
-                            setHighlightedQuote(isHighlighted ? '' : item.quote);
+                            if (isHighlighted) { setHighlightedQuote(''); return; }
+                            const pageIndex = draftPages.findIndex((page) => resolveTextSelection(page.text, item));
+                            if (pageIndex >= 0) setActivePageIdx(pageIndex);
+                            setHighlightedQuote(item);
                           }}
                           className={`p-2.5 rounded-xl bg-white border transition flex items-start justify-between gap-2 text-xs cursor-pointer ${
                             isHighlighted

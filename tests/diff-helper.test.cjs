@@ -29,6 +29,35 @@ test('문장 형광펜을 켜도 원문의 문단과 줄바꿈은 바뀌지 않�
   assert.equal(rendered.some((item) => item?.type === 'p' || item?.type === 'div'), false);
 });
 
+test('같은 말이 여러 번 나와도 교사가 선택한 두 번째 위치만 형광펜으로 표시한다', async () => {
+  const { renderTextWithHighlight, renderTextWithGreenAdditions } = await import(moduleUrl);
+  const { createTextSelection } = await import(pathToFileURL(path.join(__dirname, '../src/utils/textSelection.js')).href);
+  const text = '친구와 놀았어요.\n\n친구와 이야기했어요. 친구와 웃었어요.';
+  const start = text.indexOf('친구', 1);
+  const selection = createTextSelection(text, start, start + 2);
+  for (const rendered of [renderTextWithHighlight(text, selection), renderTextWithGreenAdditions('첫 글', text, selection)]) {
+    assert.equal(textContent(rendered), text);
+    assert.equal(rendered.filter((item) => item?.type === 'mark').length, 1);
+    assert.equal(rendered[0], text.slice(0, start));
+    assert.equal(rendered[1].props.children, '친구');
+  }
+});
+
+test('수정된 본문·잘못된 범위·위치 없는 중복 인용은 임의로 강조하지 않는다', async () => {
+  const { renderTextWithHighlight } = await import(moduleUrl);
+  const { createTextSelection, resolveTextSelection } = await import(pathToFileURL(path.join(__dirname, '../src/utils/textSelection.js')).href);
+  const text = '  친구\r\n\r\n친구와 웃었다.\r\n';
+  const normalized = text.replace(/\r\n/g, '\n');
+  const start = normalized.lastIndexOf('친구');
+  const selection = createTextSelection(text, start, start + 2);
+  assert.equal(textContent(renderTextWithHighlight(text, selection)), normalized);
+  assert.equal(renderTextWithHighlight(normalized, '친구'), normalized);
+  assert.equal(resolveTextSelection('새 문장\n' + normalized, selection), null);
+  assert.equal(resolveTextSelection(normalized, { ...selection, anchor: { ...selection.anchor, end: 9999 } }), null);
+  assert.equal(createTextSelection(normalized, -1, 2), null);
+  assert.equal(createTextSelection(normalized, 0, 2), null);
+});
+
 test('학생은 새 차수로 넘어간 뒤에도 이전 차수 피드백을 볼 수 있다', async () => {
   const { getStudentFeedbackPages } = await import(moduleUrl);
   const pages = getStudentFeedbackPages({

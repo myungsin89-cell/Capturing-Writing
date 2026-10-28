@@ -85,6 +85,7 @@ export function computeKoreanDiff(oldText = '', newText = '') {
 
 import React from 'react';
 import { getUsableDraftHistory } from './topicTransition.js';
+import { normalizeWritingText, resolveTextSelection } from './textSelection.js';
 
 /**
  * 본문에서 특정 문장(highlightedQuote)을 찾아 노란 형광펜으로 하이라이트 렌더링하는 헬퍼
@@ -92,26 +93,13 @@ import { getUsableDraftHistory } from './topicTransition.js';
  */
 export function renderTextWithHighlight(text = '', highlightedQuote = '') {
   if (!text) return null;
-  const normalizedText = text.replace(/\r\n/g, '\n');
-  const cleanQuote = (highlightedQuote || '').trim();
-  if (!cleanQuote || !normalizedText.includes(cleanQuote)) return normalizedText;
-
-  const parts = normalizedText.split(cleanQuote);
-  return parts.flatMap((part, index) => index < parts.length - 1
-    ? [
-        part,
-        React.createElement(
-          'mark',
-          {
-            key: `hl_${index}`,
-            id: index === 0 ? 'active-highlight-quote' : undefined,
-            className:
-              'manuscript-highlight bg-[#FEF08A] text-[#1E293B]'
-          },
-          cleanQuote
-        )
-      ]
-    : [part]);
+  const normalizedText = normalizeWritingText(text);
+  const range = resolveTextSelection(normalizedText, highlightedQuote);
+  if (!range) return normalizedText;
+  return [normalizedText.slice(0, range.start), React.createElement('mark', {
+    key: 'selected-range', id: 'active-highlight-quote',
+    className: 'manuscript-highlight bg-[#FEF08A] text-[#1E293B]'
+  }, normalizedText.slice(range.start, range.end)), normalizedText.slice(range.end)];
 }
 
 /**
@@ -125,7 +113,7 @@ export function renderTextWithGreenAdditions(
   highlightedQuote = ''
 ) {
   if (!currentText) return null;
-  if (highlightedQuote && highlightedQuote.trim()) {
+  if (highlightedQuote) {
     return renderTextWithHighlight(currentText, highlightedQuote);
   }
   if (!prevText || !prevText.trim() || prevText.trim() === currentText.trim()) {

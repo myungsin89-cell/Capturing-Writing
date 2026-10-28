@@ -15,7 +15,7 @@ async function main() {
     students: [
       { classId: 'A', number: '1', name: '가학생', status: 'STAGE_1_WRITING', locked: false, pieceTitle: '', draft1: '' },
       { classId: 'A', number: '2', name: '나학생', status: 'FINAL_COMPLETED', locked: true, pieceTitle: '친구 완성 제목', draft1: '  첫 문단\n\n두 번째 문단\n', teacherNote: '비공개 첨삭', historyByTopic: { OLD: { status: 'FINAL_COMPLETED', pieceTitle: '지난 작품', draft1: '지난 본문' } } },
-      { classId: 'A', number: '3', name: '다학생', status: 'STAGE_1_SUBMITTED', locked: true, pieceTitle: '요청한 글', draft1: '선생님 확인 요청', updatedAtIso: now },
+      { classId: 'A', number: '3', name: '다학생', status: 'STAGE_1_SUBMITTED', locked: true, pieceTitle: '요청한 글', draft1: '친구와 놀았어요.\n\n친구와 이야기했어요. 친구와 웃었어요.', updatedAtIso: now },
       { classId: 'A', number: '4', name: '라학생', status: 'FEEDBACK_DONE', locked: false, pieceTitle: '고치는 글', draft1: '비공개 초안' },
       { classId: 'A', number: '5', name: '마학생', status: 'REVISION_SUBMITTED', locked: true, pieceTitle: '비공개 수정 중', draft1: '비공개 새 본문', completedWriting: { pieceTitle: '이전 승인 제목', text: '이전 승인 본문' } }
     ], questions: [], config: { activeClassId: 'A', activeTopicId: 'NOW', className: '테스트 반', classAccessKeys: { A: 'key' } }
@@ -73,10 +73,26 @@ async function main() {
     assert.equal(await send.isDisabled(), true);
     await select('라학생'); assert.equal(await send.isDisabled(), true);
     await select('다학생'); assert.equal(await send.isEnabled(), true);
+    const teacherBody = teacher.locator('.manuscript-body').first();
+    const selectionStart = state.students[2].draft1.indexOf('친구', 1);
+    await teacherBody.evaluate((element, start) => {
+      const range = document.createRange();
+      range.setStart(element.firstChild, start); range.setEnd(element.firstChild, start + 2);
+      window.getSelection().removeAllRanges(); window.getSelection().addRange(range);
+      element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+    }, selectionStart);
+    assert.equal(await teacherBody.locator('mark').count(), 1);
+    assert.equal(await teacherBody.locator('mark').evaluate((element) => element.previousSibling.textContent.length), selectionStart);
+    await teacher.getByPlaceholder('이 문장을 어떻게 고치면 좋을지 적어주세요', { exact: true }).fill('두 번째 친구에 대한 조언');
+    await teacher.getByRole('button', { name: '추가', exact: true }).click();
+    assert.equal(await teacherBody.locator('mark').count(), 1);
     await teacher.getByLabel('선생님의 종합 첨삭 노트', { exact: true }).fill('다정한 조언');
     await send.click();
     await send.waitFor({ state: 'visible' });
     assert.equal(await send.isDisabled(), true);
+    const delivered = await teacher.evaluate(() => JSON.parse(localStorage.getItem('sseudam_students_v7')).find((item) => item.number === '3'));
+    assert.equal(delivered.feedbackItems[0].anchor.start, selectionStart);
+    Object.assign(state.students[2], delivered);
     await select('나학생');
     assert.equal(await teacher.getByRole('button', { name: '수정 다시 열기', exact: true }).count(), 0);
 
@@ -89,10 +105,9 @@ async function main() {
     await studentTopic.getByRole('button', { name: '친구 완성 글 보기', exact: true }).click();
     await student.getByRole('heading', { name: '친구 완성 제목', exact: true }).waitFor();
     await student.getByRole('button', { name: '내 노트로 돌아가기', exact: true }).click();
-    const guide = student.getByRole('region', { name: '글쓰기 안내와 상태', exact: true });
-    assert.match(await guide.textContent(), /글 쓰는 중/);
+    assert.match(await student.locator('.student-writing-status').textContent(), /글 쓰는 중/);
     assert.equal(await student.getByRole('region', { name: '선생님의 글쓰기 안내', exact: true }).locator('p').textContent(), topics[0].prompt);
-    assert.equal(await guide.getByRole('button', { name: '처음 글과 비교하기', exact: true }).isDisabled(), true);
+    assert.equal(await student.getByRole('button', { name: '처음 글과 비교하기', exact: true }).isDisabled(), true);
     await student.getByRole('textbox', { name: '작품 제목', exact: true }).fill('보존할 내 제목');
     await student.getByRole('textbox', { name: '글 본문', exact: true }).fill('내가 작성하던 문단\n\n이어 쓰는 중');
     await student.getByRole('button', { name: '친구 완성 글 보기', exact: true }).click();
@@ -135,8 +150,11 @@ async function main() {
     await completed.getByPlaceholder('이도윤', { exact: true }).fill('나학생');
     await completed.getByRole('button', { name: '내 글쓰기 책장 들어가기', exact: true }).click();
     await completed.getByRole('heading', { name: '함께 쓰는 주제', exact: true }).click();
-    await completed.getByRole('heading', { name: '나학생 학생, 나만의 작품을 완성했어요!', exact: true }).waitFor();
+    const completionDialog = completed.getByRole('dialog', { name: '나학생 학생, 작품을 완성했어요!', exact: true });
+    await completionDialog.waitFor({ state: 'visible' });
+    await completionDialog.getByRole('button', { name: '내 작품 보기', exact: true }).click();
     assert.equal(await completed.locator('.student-writing-status').textContent(), '최종 완성');
+    assert.equal(await completed.getByRole('heading', { name: '나학생 학생, 작품을 완성했어요!', exact: true }).count(), 0);
     assert.equal(await completed.getByRole('region', { name: '선생님의 글쓰기 안내', exact: true }).isVisible(), true);
     assert.equal(await completed.getByRole('button', { name: '친구 완성 글 보기', exact: true }).isVisible(), true);
     await completed.getByRole('button', { name: '처음 글과 비교하기', exact: true }).click();
@@ -149,9 +167,56 @@ async function main() {
       if (process.env.FRIEND_NOTEBOOK_QA_DIR) await completed.screenshot({ path: require('node:path').join(process.env.FRIEND_NOTEBOOK_QA_DIR, `student-completion-${width}.png`), fullPage: true });
     }
     await completed.getByRole('button', { name: '더 다듬기', exact: true }).click();
-    assert.equal(await completed.locator('.student-writing-status').textContent(), '최종 완성 · 더 다듬는 중');
+    assert.equal(await completed.locator('.student-writing-status').textContent(), '최종 완성 · 다듬는 중');
+    await completed.getByRole('button', { name: '책장으로', exact: true }).click();
+    await completed.getByRole('heading', { name: '함께 쓰는 주제', exact: true }).click();
+    assert.equal(await completionDialog.count(), 0, 'completion notice must not reopen on every entry');
+    await completed.getByRole('button', { name: '최종 완성 안내 보기', exact: true }).click();
+    await completionDialog.waitFor({ state: 'visible' });
+    await completed.keyboard.press('Escape');
+
+    // New feedback overrides a previously closed panel, while the same edition respects it.
+    const feedbackStudent = await makeContext(true);
+    const enterFeedbackNotebook = async () => {
+      await feedbackStudent.getByRole('heading', { name: '함께 쓰는 주제', exact: true }).click();
+    };
+    await feedbackStudent.goto('http://127.0.0.1:5173/?student=1&sheetId=QA_SHEET&classId=A&accessKey=key');
+    await feedbackStudent.getByPlaceholder('2', { exact: true }).fill('3');
+    await feedbackStudent.getByPlaceholder('이도윤', { exact: true }).fill('다학생');
+    await feedbackStudent.getByRole('button', { name: '내 글쓰기 책장 들어가기', exact: true }).click();
+    await enterFeedbackNotebook();
+    const panel = feedbackStudent.locator('#student-feedback-panel');
+    assert.equal(await panel.isVisible(), true);
+    await panel.getByRole('button', { name: /문장 조언 1/ }).click();
+    const studentMark = feedbackStudent.getByRole('region', { name: '내 글 공책', exact: true }).locator('mark');
+    assert.equal(await studentMark.count(), 1);
+    assert.equal(await studentMark.evaluate((element) => element.previousSibling.textContent.length), selectionStart);
+    const paperBounds = await feedbackStudent.getByRole('region', { name: '내 글 공책', exact: true }).boundingBox();
+    const panelBounds = await panel.boundingBox();
+    assert.ok(panelBounds.x >= paperBounds.x + paperBounds.width, 'desktop feedback stays to the right');
+    if (process.env.FRIEND_NOTEBOOK_QA_DIR) await feedbackStudent.screenshot({ path: require('node:path').join(process.env.FRIEND_NOTEBOOK_QA_DIR, 'student-feedback-side-desktop.png'), fullPage: true, animations: 'disabled' });
+    await panel.getByRole('button', { name: '첨삭 패널 닫기', exact: true }).click();
+    await feedbackStudent.getByRole('button', { name: '책장으로', exact: true }).click(); await enterFeedbackNotebook();
+    assert.equal(await panel.isVisible(), false);
+    state.students[2].teacherNote = '새로 도착한 선생님 조언';
+    if (state.students[2].draftHistory?.length) state.students[2].draftHistory.at(-1).teacherNote = state.students[2].teacherNote;
+    await feedbackStudent.reload();
+    await enterFeedbackNotebook();
+    await panel.getByText('새로 도착한 선생님 조언', { exact: true }).waitFor();
+    assert.equal(await panel.isVisible(), true);
+    await panel.getByRole('button', { name: '첨삭 패널 닫기', exact: true }).click();
+    await feedbackStudent.setViewportSize({ width: 390, height: 900 });
+    await feedbackStudent.getByRole('button', { name: '선생님께 질문', exact: true }).click();
+    await feedbackStudent.getByRole('dialog', { name: '선생님 첨삭', exact: true }).waitFor({ state: 'visible' });
+    await feedbackStudent.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '질문 내용');
+    assert.equal(await feedbackStudent.evaluate(() => document.body.style.overflow), 'hidden');
+    assert.ok(await feedbackStudent.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    if (process.env.FRIEND_NOTEBOOK_QA_DIR) await feedbackStudent.screenshot({ path: require('node:path').join(process.env.FRIEND_NOTEBOOK_QA_DIR, 'student-feedback-drawer-mobile.png'), fullPage: true, animations: 'disabled' });
+    await feedbackStudent.keyboard.press('Escape');
+    assert.equal(await panel.isVisible(), false);
+    assert.equal(await feedbackStudent.evaluate(() => document.body.style.overflow), '');
     assert.deepEqual(errors, []);
-    console.log('PASS: visible guidance and status, completion encouragement, visible first-draft comparison, teacher and student gallery entrances, request-only feedback, old-relay fallback, topic-specific notebooks, paragraphs, read-only, draft preservation, empty list, mobile overflow.');
+    console.log('PASS: exact teacher/student highlight positions, compact guidance, one-time completion modal, top actions, automatic new feedback, desktop side panel, mobile drawer with focus and Escape, teacher/student galleries, draft preservation, mobile overflow.');
   } finally {
     for (const context of contexts) await context.close();
     await browser.close();

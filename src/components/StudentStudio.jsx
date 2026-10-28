@@ -1,9 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import useStudentDraft from '../hooks/useStudentDraft';
 import useStudentFeedbackPanel from '../hooks/useStudentFeedbackPanel';
+import useCompletionNotice from '../hooks/useCompletionNotice';
+import useFeedbackDrawer from '../hooks/useFeedbackDrawer';
 import { getDraftBase, getDraftOwner } from '../utils/studentDraftStorage';
 import DraftRecoveryDialog from './DraftRecoveryDialog';
 import FriendNotebooks from './FriendNotebooks';
+import CompletionDialog from './CompletionDialog';
+import StudentFeedbackSurface from './StudentFeedbackSurface';
+import { resolveTextSelection, textFingerprint } from '../utils/textSelection';
 import {
   HandDrawnNotebookLogo,
   HandDrawnPencilIcon,
@@ -119,6 +124,7 @@ export default function StudentStudio({
       draftHistory: past?.draftHistory || [],
       teacherNote: past?.teacherNote || '',
       feedbackItems: past?.feedbackItems || [],
+      completedWriting: past?.completedWriting || null,
       locked: Boolean(past?.locked) || Boolean(topic.classLocked)
     };
   };
@@ -159,8 +165,18 @@ export default function StudentStudio({
   const feedbackTeacherNote = activeFeedbackPage?.teacherNote || '';
   const [isFeedbackOpen, setFeedbackOpen] = useStudentFeedbackPanel(
     getDraftOwner({ spreadsheetId: config.spreadsheetId || '', classId: config.activeClassId || '', student: currentStudent, topicId: openedTopicId }),
-    topicStudentData?.status === 'FEEDBACK_DONE' && feedbackPages.length > 0
+    topicStudentData?.status === 'FEEDBACK_DONE' && feedbackPages.length > 0,
+    textFingerprint(JSON.stringify(feedbackPages.map((page) => [page.round, page.teacherNote, page.feedbackItems])))
   );
+  const [isCompletionOpen, openCompletion, closeCompletion] = useCompletionNotice(
+    getDraftOwner({ spreadsheetId: config.spreadsheetId || '', classId: config.activeClassId || '', student: currentStudent, topicId: openedTopicId }),
+    isFinalWritingStatus(topicStudentData?.status), topicStudentData?.completedWriting?.completedAt,
+    !isTeacherPreview && !isFriendsOpen
+  );
+  const isWideFeedback = useFeedbackDrawer(isFeedbackOpen && Boolean(selectedTopic) && !isFriendsOpen && !isCompletionOpen, () => {
+    setFeedbackOpen(false); setHighlightedQuote(''); setIsQuestionOpen(false);
+    feedbackToggleRef.current?.focus();
+  });
 
   useEffect(() => {
     setIsQuestionOpen(false);
@@ -686,10 +702,17 @@ export default function StudentStudio({
           </button>
           <h1 className="text-base font-semibold text-[#334155]">{selectedTopic.title}</h1>
           <span className="text-xs text-[#64748B]">{currentStudent.number}번 {currentStudent.name}</span>
+          {isFinalCompleted ? <button type="button" className="student-writing-status is-complete" onClick={openCompletion} aria-label="최종 완성 안내 보기"><Check className="w-4 h-4" aria-hidden="true" />최종 완성{isEditingCompleted ? ' · 다듬는 중' : ''}</button>
+            : <span role="status" className="student-writing-status">{writingStatus}</span>}
           {isTeacherPreview && <span className="text-xs text-[#64748B]">교사 읽기 전용</span>}
         </div>
 
         <div className="student-toolbar-actions">
+          {!isTeacherPreview && <>
+            <button type="button" className="student-action-button" onClick={openFriendNotebooks}><BookOpen className="w-4 h-4" aria-hidden="true" />친구 완성 글 보기</button>
+            <button type="button" onClick={openQuestion} className="student-action-button"><MessageSquare className="w-4 h-4" aria-hidden="true" />선생님께 질문</button>
+          </>}
+          <button type="button" className="student-action-button" disabled={!hasRevision} title={hasRevision ? '' : '두 번째 글을 제출하면 처음 글과 비교할 수 있어요.'} onClick={() => setIsDiffModalOpen(true)}><HandDrawnDiffIcon size={16} color="#475569" />처음 글과 비교하기</button>
           <details ref={toolsRef} className="student-tools">
             <summary className="student-text-button">
               <MoreHorizontal className="w-4 h-4" aria-hidden="true" />글 도구
@@ -719,48 +742,9 @@ export default function StudentStudio({
               )}
             </div>
           </details>
-          {!isTeacherPreview && (
-            <button type="button" onClick={openQuestion} className="student-text-button">선생님께 질문</button>
-          )}
-          <button
-            ref={feedbackToggleRef}
-            type="button"
-            aria-expanded={isFeedbackOpen}
-            aria-controls="student-feedback-panel"
-            onClick={() => isFeedbackOpen ? closeFeedback() : setFeedbackOpen(true)}
-            className="student-action-button"
-          >
-            {isFeedbackOpen
-              ? <PanelRightClose className="w-4 h-4" aria-hidden="true" />
-              : <PanelRightOpen className="w-4 h-4" aria-hidden="true" />}
-            {isFeedbackOpen ? '첨삭 닫기' : '첨삭 보기'}
-          </button>
         </div>
       </header>
 
-      <section aria-label="글쓰기 안내와 상태" className="student-learning-guide" data-state={isFinalCompleted ? 'complete' : waitingForFeedback && !isRecalled ? 'waiting' : 'writing'}>
-        <div role="status" className="student-writing-status">
-          {isFinalCompleted && <Check className="w-5 h-5 shrink-0" aria-hidden="true" />}
-          <span>{writingStatus}{isFinalCompleted && isEditingCompleted ? ' · 더 다듬는 중' : ''}</span>
-        </div>
-        {isFinalCompleted ? <div className="space-y-1.5">
-          <h2 className="text-lg sm:text-xl font-bold text-[#1B4332]">{currentStudent.name} 학생, 나만의 작품을 완성했어요!</h2>
-          <p className="text-sm sm:text-base leading-relaxed text-[#475569]">끝까지 글을 쓰고 다듬은 노력이 멋져요. 처음 쓴 글과 비교하며 달라진 점을 찾아보고, 친구들의 작품도 감상해 보세요.</p>
-        </div> : <p className="text-sm leading-relaxed text-[#475569]">{isRecalled ? '글을 고친 뒤 다시 제출해 주세요.'
-          : waitingForFeedback ? '글을 잘 제출했어요. 선생님의 조언을 기다리는 동안 친구들의 완성 글도 읽어 보세요.'
-          : isClassLocked ? '이 주제의 글쓰기가 마감되었어요. 쓴 글을 읽거나 친구들의 작품을 감상할 수 있어요.'
-          : topicStudentData?.status === 'FEEDBACK_DONE' ? '첨삭 보기에서 선생님의 조언을 읽고, 글을 한 번 더 다듬어 보세요.'
-          : '선생님의 안내를 읽고, 나의 생각을 글로 표현해 보세요.'}</p>}
-        {selectedTopic.prompt && <section className="student-writing-guide" aria-label="선생님의 글쓰기 안내">
-          <h2 className="font-bold text-[#1B4332] flex items-center gap-2"><BookOpen className="w-4 h-4 shrink-0" aria-hidden="true" />선생님의 글쓰기 안내</h2>
-          <p className="whitespace-pre-wrap leading-relaxed break-words">{selectedTopic.prompt}</p>
-        </section>}
-        <div className="flex flex-wrap items-center gap-3">
-          {!isTeacherPreview && <button type="button" className="student-action-button" onClick={openFriendNotebooks}><BookOpen className="w-4 h-4" aria-hidden="true" />친구 완성 글 보기</button>}
-          <button type="button" className="student-action-button" disabled={!hasRevision} onClick={() => setIsDiffModalOpen(true)}><HandDrawnDiffIcon size={16} color="#475569" />처음 글과 비교하기</button>
-          {!hasRevision && <span className="text-xs text-[#64748B]">두 번째 글을 제출하면 처음 글과 비교할 수 있어요.</span>}
-        </div>
-      </section>
 
       {draft.error && !isTeacherPreview && (
         <div role="alert" className="rounded-xl border border-[#FCA5A5] bg-[#FEF2F2] p-4 text-sm text-[#991B1B] space-y-3">
@@ -774,7 +758,12 @@ export default function StudentStudio({
       )}
 
       <div className={'student-notebook-layout flex-1 ' + (isFeedbackOpen ? '' : 'is-feedback-closed')}>
-        <section aria-label="내 글 공책" className="notebook-card sketch-card bg-white flex flex-col">
+        <section aria-label="내 글 공책" className="student-paper-shell notebook-card sketch-card bg-white flex flex-col">
+          <button ref={feedbackToggleRef} type="button" aria-expanded={isFeedbackOpen} aria-controls="student-feedback-panel"
+            aria-label={isFeedbackOpen ? '선생님 첨삭 닫기' : '선생님 첨삭 보기'} onClick={() => isFeedbackOpen ? closeFeedback() : setFeedbackOpen(true)} className="student-feedback-tab">
+            {isFeedbackOpen ? <PanelRightClose className="w-4 h-4" aria-hidden="true" /> : <PanelRightOpen className="w-4 h-4" aria-hidden="true" />}
+            <span>{isFeedbackOpen ? '첨삭 닫기' : '첨삭 보기'}</span>{feedbackPages.length > 0 && <span className="student-feedback-dot" aria-hidden="true" />}
+          </button>
           <div className="student-paper-toolbar">
             <div className="flex items-center gap-3 flex-wrap">
               <h2 className="text-sm font-semibold text-[#475569]">{viewingPageIdx === null ? '내 글' : draftPages[viewingPageIdx]?.label}</h2>
@@ -804,6 +793,10 @@ export default function StudentStudio({
               )}
             </div>
           </div>
+
+          {selectedTopic.prompt && <section className="student-writing-guide" aria-label="선생님의 글쓰기 안내">
+            <h2>선생님 안내</h2><p>{selectedTopic.prompt}</p>
+          </section>}
 
           {restoredBannerMsg && (
             <div className="student-inline-notice">
@@ -893,7 +886,8 @@ export default function StudentStudio({
           </footer>
         </section>
 
-        <aside id="student-feedback-panel" aria-label="선생님 첨삭" hidden={!isFeedbackOpen} className="student-feedback-panel sketch-card bg-white p-6 sm:p-7 space-y-6">
+        <StudentFeedbackSurface wide={isWideFeedback} open={isFeedbackOpen} onClose={closeFeedback}>
+        <aside id="student-feedback-panel" aria-label="선생님 첨삭" role={isWideFeedback ? undefined : 'dialog'} aria-modal={!isWideFeedback && isFeedbackOpen ? true : undefined} hidden={!isFeedbackOpen} className="student-feedback-panel sketch-card bg-white p-6 sm:p-7 space-y-6">
           <header className="flex items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-base font-semibold text-[#334155]"><MessageSquare className="w-4 h-4" aria-hidden="true" />선생님 첨삭</h2>
             <button type="button" onClick={closeFeedback} className="student-text-button" aria-label="첨삭 패널 닫기"><X className="w-4 h-4" aria-hidden="true" /></button>
@@ -923,11 +917,18 @@ export default function StudentStudio({
                 <div className="space-y-3">
                   <h3 className="text-xs font-medium text-[#64748B]">문장별 조언 · 누르면 글에서 확인할 수 있어요</h3>
                   {feedbackItems.map((item, idx) => {
-                    const isHighlighted = Boolean(highlightedQuote && highlightedQuote === item.quote);
+                    const feedbackKey = `${activeFeedbackPage.round}:${idx}`;
+                    const isHighlighted = highlightedQuote?.feedbackKey === feedbackKey;
                     return (
                       <button key={item.id || idx} type="button" aria-pressed={isHighlighted} onClick={() => {
                         if (!item.quote) return;
-                        setHighlightedQuote(isHighlighted ? '' : item.quote);
+                        if (isHighlighted) { setHighlightedQuote(''); return; }
+                        const preferredIndex = draftPages.findIndex((page) => page.round === activeFeedbackPage.round);
+                        const pageIdx = preferredIndex >= 0 && resolveTextSelection(draftPages[preferredIndex].text, item)
+                          ? preferredIndex : draftPages.findIndex((page) => resolveTextSelection(page.text, item));
+                        if (pageIdx < 0) { showToast('문장 위치를 정확히 확인하기 어려워요. 아래 인용문과 조언을 함께 읽어 주세요.'); return; }
+                        setViewingPageIdx(pageIdx); setShowGreenText(false);
+                        setHighlightedQuote({ ...item, feedbackKey });
                       }} className={'student-feedback-item ' + (isHighlighted ? 'is-selected' : '')}>
                         <span className="text-xs text-[#64748B]">문장 조언 {idx + 1}</span>
                         {item.quote && <blockquote className="text-sm text-[#475569] leading-relaxed">{item.quote}</blockquote>}
@@ -964,6 +965,7 @@ export default function StudentStudio({
             </div>
           </details>
         </aside>
+        </StudentFeedbackSurface>
       </div>
 
       {recoveryData && <DraftRecoveryDialog topicTitle={selectedTopic.title} currentDraft={{ pieceTitle, text: editorText }} items={recoveryData.items} legacy={recoveryData.legacy} canRestore={!isSubmitting && !isTeacherPreview && ((!isClassLocked && !isTeacherLocked) || isFinalCompleted)} onClose={() => setRecoveryData(null)} onRestore={(snapshot) => {
@@ -976,6 +978,8 @@ export default function StudentStudio({
       }} />}
 
       <GrowthDiffModal isOpen={isDiffModalOpen} onClose={() => setIsDiffModalOpen(false)} student={topicStudentData} topicTitle={selectedTopic.title} />
+      {isCompletionOpen && <CompletionDialog name={currentStudent.name} canCompare={hasRevision} onClose={closeCompletion}
+        onFriends={() => { closeCompletion(); openFriendNotebooks(); }} onCompare={() => { closeCompletion(); setIsDiffModalOpen(true); }} />}
     </div>
   );
 }
