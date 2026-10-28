@@ -112,10 +112,16 @@ async function main() {
     await starChoice(teacher, 3).hover();
     assert.equal(await starPicker.locator('.completion-star-choice svg[fill="currentColor"]').count(), 3);
     await starChoice(teacher, 2).click();
+    await starChoice(teacher, 2).click();
+    assert.equal(await teacher.getByRole('radio', { name: '별 없이', exact: true }).isChecked(), true);
+    assert.equal(await starPicker.locator('.completion-star-choice svg[fill="currentColor"]').count(), 0, 'repeat click clears stars without needing to move the mouse');
+    await starChoice(teacher, 2).click();
+    assert.equal(await teacher.getByRole('radio', { name: '별 2개', exact: true }).isChecked(), true);
     if (process.env.FRIEND_NOTEBOOK_QA_DIR) await starPicker.screenshot({ path: require('node:path').join(process.env.FRIEND_NOTEBOOK_QA_DIR, 'teacher-completion-stars.png') });
     await teacher.getByRole('button', { name: '별 변경 저장', exact: true }).click();
     Object.assign(state.students[1], await teacher.evaluate(() => JSON.parse(localStorage.getItem('sseudam_students_v7')).find((item) => item.number === '2')));
     assert.equal(state.students[1].completedWriting.stars, 2);
+    assert.equal(await roster.getByRole('img', { name: /선생님이 준 별/ }).count(), 0, 'roster cards keep their original shape without stars');
 
     const student = await makeContext(true);
     await student.goto('http://127.0.0.1:5173/?student=1&sheetId=QA_SHEET&classId=A&accessKey=key');

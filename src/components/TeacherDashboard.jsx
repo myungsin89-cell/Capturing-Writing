@@ -2003,7 +2003,6 @@ export default function TeacherDashboard({
                       <div className="text-[11px] text-[#64748B] truncate">
                         {textLen > 0 ? `${textLen}자 작성됨` : '작성 전'}
                       </div>
-                      <CompletionStars value={getCompletedWriting(st)?.stars} />
                     </div>
                   </div>
 

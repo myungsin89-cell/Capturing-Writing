@@ -18,8 +18,10 @@ export function CompletionStarPicker({ value, onChange, disabled = false }) {
   return <fieldset disabled={disabled} aria-label="완성 작품 별 선택" className="completion-star-picker">
     <legend className="text-xs font-semibold text-[#475569] mb-2">완성 작품의 별 <span className="font-normal text-[#64748B]">(선택)</span></legend>
     <div className="flex items-center gap-1 flex-wrap" onMouseLeave={() => setHover(null)}>
-      {[1, 2, 3].map((count) => <label key={count} onMouseEnter={() => !disabled && setHover(count)} className="completion-star-choice">
-        <input type="radio" name={name} value={count} checked={selected === count} onChange={() => onChange(count)} aria-label={`별 ${count}개`} className="sr-only" />
+      {[1, 2, 3].map((count) => <label key={count} title="선택한 별을 다시 누르면 취소됩니다" onMouseEnter={() => !disabled && setHover(count)} className="completion-star-choice">
+        <input type="radio" name={name} value={count} checked={selected === count}
+          onClick={() => { if (selected === count) { setHover(0); onChange(0); } }}
+          onChange={() => { setHover(count); onChange(count); }} aria-label={`별 ${count}개`} className="sr-only" />
         <Star aria-hidden="true" className={count <= preview ? 'text-[#B77910]' : 'text-[#CBD5E1]'} fill={count <= preview ? 'currentColor' : 'none'} strokeWidth={1.6} />
       </label>)}
       <label onMouseEnter={() => setHover(0)} className="completion-no-stars">
