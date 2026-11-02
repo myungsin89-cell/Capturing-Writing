@@ -3,14 +3,17 @@ import useStudentDraft from '../hooks/useStudentDraft';
 import useStudentFeedbackPanel from '../hooks/useStudentFeedbackPanel';
 import useCompletionNotice from '../hooks/useCompletionNotice';
 import useFeedbackDrawer from '../hooks/useFeedbackDrawer';
+import useSpellcheck from '../hooks/useSpellcheck';
 import { getDraftBase, getDraftOwner } from '../utils/studentDraftStorage';
 import DraftRecoveryDialog from './DraftRecoveryDialog';
 import FriendNotebooks from './FriendNotebooks';
 import CompletionDialog from './CompletionDialog';
 import StudentFeedbackSurface from './StudentFeedbackSurface';
 import CompletionStars from './CompletionStars';
+import SpellcheckCard from './SpellcheckCard';
 import { getCompletedWriting, isCompletedResubmission } from '../utils/batchFeedback';
 import { resolveTextSelection, textFingerprint } from '../utils/textSelection';
+import { focusWritingRange } from '../utils/focusWritingRange';
 import {
   HandDrawnNotebookLogo,
   HandDrawnPencilIcon,
@@ -42,6 +45,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   MoreHorizontal,
+  SpellCheck,
   X
 } from 'lucide-react';
 
@@ -90,6 +94,7 @@ export default function StudentStudio({
   const [isQuestionOpen, setIsQuestionOpen] = useState(false);
   const [focusQuestionRequested, setFocusQuestionRequested] = useState(false);
   const textareaRef = useRef(null);
+  const titleInputRef = useRef(null);
   const questionSubmittingRef = useRef(false);
   const questionInputRef = useRef(null);
   const toolsRef = useRef(null);
@@ -152,6 +157,10 @@ export default function StudentStudio({
     editingCompleted: isEditingCompleted, isCompleted: isFinalWritingStatus(topicStudentData?.status)
   });
   const { text: editorText, pieceTitle, setText: setEditorText, setPieceTitle } = draft;
+  const spellcheck = useSpellcheck({
+    owner: getDraftOwner({ spreadsheetId: config.spreadsheetId || '', classId: config.activeClassId || '', student: currentStudent, topicId: openedTopicId }),
+    title: pieceTitle, text: editorText, enabled: Boolean(selectedTopic) && !isTeacherPreview
+  });
   const lastSavedTime = draft.savedAt ? new Date(draft.savedAt).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
   const restoredBannerMsg = draft.notice;
   const displayPieceTitle = String(
@@ -669,6 +678,25 @@ export default function StudentStudio({
     setIsQuestionOpen(false);
     feedbackToggleRef.current?.focus();
   };
+  const canCheckSpelling = !isReadOnly && !isViewingText && !isSubmitting && Boolean(pieceTitle.trim() || editorText.trim());
+  const checkSpelling = () => {
+    if (!canCheckSpelling) return;
+    setFeedbackOpen(true);
+    spellcheck.run();
+    requestAnimationFrame(() => document.getElementById('student-spellcheck-results')?.scrollIntoView({ block: 'nearest' }));
+  };
+  const locateSpelling = (issue) => {
+    if (isReadOnly || isSubmitting || issue.changed || !Number.isInteger(issue.start) || !Number.isInteger(issue.end)) return;
+    const value = issue.field === 'title' ? pieceTitle : editorText;
+    if (value.slice(issue.start, issue.end) !== issue.original) return;
+    setHighlightedQuote(''); setShowGreenText(false); setViewingPageIdx(null);
+    if (!isWideFeedback) closeFeedback();
+    requestAnimationFrame(() => {
+      const input = issue.field === 'title' ? titleInputRef.current : textareaRef.current;
+      if (!input) return;
+      focusWritingRange(input, issue.start, issue.end);
+    });
+  };
   const openQuestion = () => {
     setFeedbackOpen(true);
     setIsQuestionOpen(true);
@@ -778,6 +806,10 @@ export default function StudentStudio({
               <span className="text-xs text-[#64748B]">{paragraphCount}개 문단 · {activeDisplayText.trim().length}자</span>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
+              {!isTeacherPreview && <button type="button" className="student-text-button" disabled={!canCheckSpelling || spellcheck.state?.status === 'loading'}
+                title="제목과 본문만 외부 맞춤법 검사 서비스로 보내요." onClick={checkSpelling}>
+                <SpellCheck className="w-4 h-4" aria-hidden="true" />{spellcheck.state?.status === 'loading' ? '검사 중…' : '맞춤법 검사'}
+              </button>}
               {lastSavedTime && !isReadOnly && viewingPageIdx === null && (
                 <span className="text-xs text-[#64748B]" title={'마지막 저장: ' + lastSavedTime}>기기에 저장됨</span>
               )}
@@ -829,6 +861,7 @@ export default function StudentStudio({
           <div className="manuscript-paper lined-paper rounded-2xl border border-[#CBD5E1] text-[#1E293B]">
             {!isReadOnly && !isViewingText ? (
               <input
+                ref={titleInputRef}
                 type="text"
                 value={pieceTitle}
                 onChange={(event) => setPieceTitle(event.target.value)}
@@ -896,6 +929,8 @@ export default function StudentStudio({
 
         <StudentFeedbackSurface wide={isWideFeedback} open={isFeedbackOpen} onClose={closeFeedback}>
         <aside id="student-feedback-panel" aria-label="선생님 첨삭" role={isWideFeedback ? undefined : 'dialog'} aria-modal={!isWideFeedback && isFeedbackOpen ? true : undefined} hidden={!isFeedbackOpen} className="student-feedback-panel sketch-card bg-white p-6 sm:p-7 space-y-6">
+          <SpellcheckCard state={spellcheck.state} canCheck={canCheckSpelling} canLocate={!isReadOnly && !isSubmitting}
+            onCheck={checkSpelling} onLocate={locateSpelling} onClose={spellcheck.dismiss} />
           <header className="flex items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-base font-semibold text-[#334155]"><MessageSquare className="w-4 h-4" aria-hidden="true" />선생님 첨삭</h2>
             <button type="button" onClick={closeFeedback} className="student-text-button" aria-label="첨삭 패널 닫기"><X className="w-4 h-4" aria-hidden="true" /></button>
