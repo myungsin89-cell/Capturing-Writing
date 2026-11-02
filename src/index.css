@@ -331,6 +331,10 @@ textarea.manuscript-body {
   margin-bottom: 16px;
 }
 
+.student-spellcheck-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; flex-shrink: 0; padding: 8px 14px; border: 1px solid #2D6A4F; border-radius: 8px; background: #2D6A4F; color: #FFF; font-size: 14px; line-height: 1.5; font-weight: 600; cursor: pointer; }
+.student-spellcheck-trigger:hover:not(:disabled) { background: #1B4332; border-color: #1B4332; }
+.student-quiet .student-spellcheck-trigger:disabled { opacity: 1; background: #E4EEE6; border-color: #B8CFBE; color: #467356; cursor: not-allowed; }
+
 .student-spellcheck-card { padding: 16px; border: 1px solid #D5DDE3; border-radius: 12px; background: #FAFCFA; display: flex; flex-direction: column; gap: 10px; }
 .student-spellcheck-list { max-height: 300px; overflow-y: auto; overscroll-behavior: contain; }
 .student-spellcheck-list li + li { border-top: 1px solid #E2E8F0; }

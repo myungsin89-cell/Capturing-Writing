@@ -85,6 +85,12 @@ async function main() {
     assert.equal(await send.isDisabled(), true);
     await select('라학생'); assert.equal(await send.isDisabled(), true);
     await select('다학생'); assert.equal(await send.isEnabled(), true);
+    await teacher.getByRole('button', { name: '학생 공책', exact: true }).click();
+    const previewSpellcheck = teacher.getByRole('button', { name: '맞춤법 검사', exact: true });
+    await previewSpellcheck.waitFor({ state: 'visible' });
+    assert.equal(await previewSpellcheck.isDisabled(), true, 'teacher notebook preview shows the spellcheck button without allowing edits');
+    assert.match(await previewSpellcheck.getAttribute('title'), /읽기 전용/);
+    await teacher.getByRole('button', { name: '선생님 관리', exact: true }).click();
     const teacherBody = teacher.locator('.manuscript-body').first();
     const selectionStart = state.students[2].draft1.indexOf('친구', 1);
     await teacherBody.evaluate((element, start) => {

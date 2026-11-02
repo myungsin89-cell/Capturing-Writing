@@ -680,7 +680,7 @@ export default function StudentStudio({
   };
   const canCheckSpelling = !isReadOnly && !isViewingText && !isSubmitting && Boolean(pieceTitle.trim() || editorText.trim());
   const checkSpelling = () => {
-    if (!canCheckSpelling) return;
+    if (!canCheckSpelling || spellcheck.waitSeconds > 0) return;
     setFeedbackOpen(true);
     spellcheck.run();
     requestAnimationFrame(() => document.getElementById('student-spellcheck-results')?.scrollIntoView({ block: 'nearest' }));
@@ -806,10 +806,12 @@ export default function StudentStudio({
               <span className="text-xs text-[#64748B]">{paragraphCount}개 문단 · {activeDisplayText.trim().length}자</span>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
-              {!isTeacherPreview && <button type="button" className="student-text-button" disabled={!canCheckSpelling || spellcheck.state?.status === 'loading'}
-                title="제목과 본문만 외부 맞춤법 검사 서비스로 보내요." onClick={checkSpelling}>
+              <button type="button" className="student-spellcheck-trigger" aria-label="맞춤법 검사"
+                disabled={!canCheckSpelling || spellcheck.state?.status === 'loading' || spellcheck.waitSeconds > 0}
+                title={isTeacherPreview ? '교사 미리보기는 읽기 전용이에요. 학생 화면에서 검사할 수 있어요.' : '제목과 본문만 외부 맞춤법 검사 서비스로 보내요.'} onClick={checkSpelling}>
                 <SpellCheck className="w-4 h-4" aria-hidden="true" />{spellcheck.state?.status === 'loading' ? '검사 중…' : '맞춤법 검사'}
-              </button>}
+                {spellcheck.waitSeconds > 0 && spellcheck.state?.status !== 'loading' && <span className="text-xs font-normal">· {spellcheck.waitSeconds}초 후</span>}
+              </button>
               {lastSavedTime && !isReadOnly && viewingPageIdx === null && (
                 <span className="text-xs text-[#64748B]" title={'마지막 저장: ' + lastSavedTime}>기기에 저장됨</span>
               )}
@@ -929,7 +931,7 @@ export default function StudentStudio({
 
         <StudentFeedbackSurface wide={isWideFeedback} open={isFeedbackOpen} onClose={closeFeedback}>
         <aside id="student-feedback-panel" aria-label="선생님 첨삭" role={isWideFeedback ? undefined : 'dialog'} aria-modal={!isWideFeedback && isFeedbackOpen ? true : undefined} hidden={!isFeedbackOpen} className="student-feedback-panel sketch-card bg-white p-6 sm:p-7 space-y-6">
-          <SpellcheckCard state={spellcheck.state} canCheck={canCheckSpelling} canLocate={!isReadOnly && !isSubmitting}
+          <SpellcheckCard state={spellcheck.state} canCheck={canCheckSpelling && spellcheck.waitSeconds === 0} waitSeconds={spellcheck.waitSeconds} canLocate={!isReadOnly && !isSubmitting}
             onCheck={checkSpelling} onLocate={locateSpelling} onClose={spellcheck.dismiss} />
           <header className="flex items-center justify-between gap-3">
             <h2 className="flex items-center gap-2 text-base font-semibold text-[#334155]"><MessageSquare className="w-4 h-4" aria-hidden="true" />선생님 첨삭</h2>

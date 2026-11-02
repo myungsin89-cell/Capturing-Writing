@@ -42,6 +42,7 @@ async function main() {
     localStorage.setItem('sseudam_gas_url_v5', 'https://qa-relay.invalid/exec');
   }, state);
   const page = await context.newPage();
+  await page.clock.install();
   page.on('pageerror', (error) => errors.push(error.message));
   try {
     await page.goto('http://127.0.0.1:5173/?student=1&sheetId=QA_SHEET&classId=A&accessKey=key');
@@ -53,6 +54,10 @@ async function main() {
     const body = page.getByRole('textbox', { name: '글 본문', exact: true });
     const check = page.getByRole('button', { name: '맞춤법 검사', exact: true });
     const card = page.getByRole('region', { name: '맞춤법 검사 결과', exact: true });
+    const allowNextCheck = async () => {
+      await page.clock.fastForward(10001);
+      await page.waitForFunction(() => !document.querySelector('[aria-label="맞춤법 검사"]').disabled);
+    };
     const selected = async (input, start, end = start + 2) => {
       await page.waitForFunction(({ selector, start, end }) => {
         const element = document.querySelector(selector);
@@ -61,9 +66,12 @@ async function main() {
     };
     const original = '  나는 할수 있어요.\n\n친구도 할수 있어요.\n\n끝 문단\n';
     await title.fill('내가 할수 있는 일'); await body.fill(original);
+    assert.equal(await check.evaluate((element) => getComputedStyle(element).backgroundColor), 'rgb(45, 106, 79)');
     await page.getByRole('button', { name: '선생님 첨삭 닫기', exact: true }).click();
     await check.click();
     await card.getByText('확인할 표현 3곳', { exact: true }).waitFor();
+    await check.click();
+    assert.equal(requests.length, 1, 'unchanged text reuses the previous result without calling the service');
     assert.deepEqual(Object.keys(requests[0].payload).sort(), ['text', 'title']);
     assert.equal(requests[0].headers.cookie, undefined, 'student cookies are not sent');
     assert.equal(requests[0].payload.text, original);
@@ -78,6 +86,10 @@ async function main() {
     assert.deepEqual(await body.evaluate((input) => [input.selectionStart, input.selectionEnd]), [original.indexOf('할수'), original.indexOf('할수') + 2]);
     await page.keyboard.insertText('할 수');
     await card.getByText('변경됨', { exact: true }).waitFor();
+    assert.equal(await check.isDisabled(), true, 'new text cannot be checked again within ten seconds');
+    assert.equal(await card.getByRole('button', { name: '다시 검사', exact: true }).isDisabled(), true);
+    await check.evaluate((element) => element.click());
+    assert.equal(requests.length, 1);
     assert.equal(await body.inputValue(), original.replace('할수', '할 수'));
     await card.locator('.student-spellcheck-item').nth(2).click();
     await selected(body, original.lastIndexOf('할수') + 1);
@@ -87,12 +99,13 @@ async function main() {
     await selected(title, 3);
     assert.deepEqual(await title.evaluate((input) => [input.selectionStart, input.selectionEnd]), [3, 5]);
     await page.keyboard.insertText('할 수');
+    await allowNextCheck();
     await card.getByRole('button', { name: '다시 검사', exact: true }).click();
     await card.getByText('이번 검사에서 확인할 표현을 찾지 못했어요.', { exact: true }).waitFor();
 
     await page.setViewportSize({ width: 390, height: 900 });
     await page.getByRole('button', { name: '첨삭 패널 닫기', exact: true }).click();
-    await body.fill(original); await check.click();
+    await body.fill(original); await allowNextCheck(); await check.click();
     await card.getByText('확인할 표현 2곳', { exact: true }).waitFor();
     assert.equal(await page.getByRole('dialog', { name: '선생님 첨삭', exact: true }).count(), 1);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
@@ -105,9 +118,11 @@ async function main() {
     assert.equal(await body.inputValue(), original);
 
     await page.setViewportSize({ width: 1600, height: 1000 });
+    await title.fill('오류 확인 제목'); await allowNextCheck();
     mode = 'error'; await check.click();
     await card.getByText(/지금은 맞춤법 검사에 연결할 수 없어요/).waitFor();
     assert.equal(await card.getByText('이번 검사에서 확인할 표현을 찾지 못했어요.', { exact: true }).count(), 0);
+    await allowNextCheck();
     mode = 'hold'; await card.getByRole('button', { name: '다시 검사', exact: true }).click();
     await card.getByText('글을 확인하고 있어요…', { exact: true }).waitFor();
     await body.fill(`새 문장\n${original}`);
@@ -118,11 +133,13 @@ async function main() {
     assert.equal(await body.evaluate((input) => input.selectionStart), original.lastIndexOf('할수') + 5);
     if (process.env.SPELLCHECK_QA_DIR) await page.screenshot({ path: path.join(process.env.SPELLCHECK_QA_DIR, 'spellcheck-desktop.png'), fullPage: true, animations: 'disabled' });
     await body.fill(`${'긴 문단입니다.\n\n'.repeat(100)}친구도 할수 있어요.`);
+    await allowNextCheck();
     await check.click();
     await card.getByText('확인할 표현 1곳', { exact: true }).waitFor();
     await card.locator('.student-spellcheck-item').click();
     await selected(body, (await body.inputValue()).lastIndexOf('할수'));
     await page.waitForFunction(() => window.scrollY > 4000);
+    await body.fill((await body.inputValue()) + '추가'); await allowNextCheck();
     mode = 'hold'; await check.click();
     await card.getByText('글을 확인하고 있어요…', { exact: true }).waitFor();
     await page.getByRole('button', { name: '책장으로', exact: true }).click();
@@ -130,7 +147,7 @@ async function main() {
     await page.getByRole('heading', { name: '다른 주제', exact: true }).click();
     assert.equal(await card.count(), 0, 'results cannot leak into another topic');
     assert.deepEqual(errors, []);
-    console.log('PASS: results above teacher feedback, text-only requests, no cookies or automatic edits, repeated-word offsets, direct typing, title corrections, paragraph preservation, mobile selection, failed/late requests and topic isolation.');
+    console.log('PASS: green visible button, unchanged-text reuse, ten-second request interval, results above teacher feedback, text-only requests, no cookies or automatic edits, repeated-word offsets, direct typing, title corrections, paragraph preservation, mobile selection, failed/late requests and topic isolation.');
   } finally { await context.close(); await browser.close(); }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

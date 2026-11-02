@@ -1,14 +1,14 @@
 import React from 'react';
 import { ArrowRight, LoaderCircle, SpellCheck, X } from 'lucide-react';
 
-export default function SpellcheckCard({ state, canCheck, canLocate, onCheck, onLocate, onClose }) {
+export default function SpellcheckCard({ state, canCheck, waitSeconds = 0, canLocate, onCheck, onLocate, onClose }) {
   if (!state) return null;
   const issues = state.result?.issues || [];
   return <section id="student-spellcheck-results" className="student-spellcheck-card" aria-label="맞춤법 검사 결과" aria-busy={state.status === 'loading'}>
     <header className="flex items-center justify-between gap-3">
       <h2 className="flex items-center gap-2 text-sm font-semibold text-[#334155]"><SpellCheck className="w-4 h-4" aria-hidden="true" />맞춤법 검사</h2>
       <div className="flex items-center gap-3">
-        {state.status !== 'loading' && <button type="button" onClick={onCheck} disabled={!canCheck} className="student-text-button">다시 검사</button>}
+        {state.status !== 'loading' && <button type="button" aria-label="다시 검사" onClick={onCheck} disabled={!canCheck} className="student-text-button">{waitSeconds > 0 ? `${waitSeconds}초 후 검사` : '다시 검사'}</button>}
         {state.status !== 'loading' && <button type="button" onClick={onClose} className="student-text-button" aria-label="맞춤법 결과 닫기"><X className="w-4 h-4" aria-hidden="true" /></button>}
       </div>
     </header>
