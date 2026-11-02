@@ -90,6 +90,7 @@ async function main() {
     await previewSpellcheck.waitFor({ state: 'visible' });
     assert.equal(await previewSpellcheck.isDisabled(), true, 'teacher notebook preview shows the spellcheck button without allowing edits');
     assert.match(await previewSpellcheck.getAttribute('title'), /읽기 전용/);
+    assert.equal(await teacher.getByRole('button', { name: '저장', exact: true }).isDisabled(), true);
     await teacher.getByRole('button', { name: '선생님 관리', exact: true }).click();
     const teacherBody = teacher.locator('.manuscript-body').first();
     const selectionStart = state.students[2].draft1.indexOf('친구', 1);

@@ -53,6 +53,7 @@ async function main() {
     const title = page.getByRole('textbox', { name: '작품 제목', exact: true });
     const body = page.getByRole('textbox', { name: '글 본문', exact: true });
     const check = page.getByRole('button', { name: '맞춤법 검사', exact: true });
+    const save = page.getByRole('button', { name: '저장', exact: true });
     const card = page.getByRole('region', { name: '맞춤법 검사 결과', exact: true });
     const allowNextCheck = async () => {
       await page.clock.fastForward(10001);
@@ -65,7 +66,38 @@ async function main() {
       }, { selector: await input.evaluate((element) => `[aria-label="${element.getAttribute('aria-label')}"]`), start, end });
     };
     const original = '  나는 할수 있어요.\n\n친구도 할수 있어요.\n\n끝 문단\n';
+    await save.click();
+    assert.equal(await page.evaluate(() => {
+      const key = Object.keys(localStorage).find((key) => key.startsWith('sseudam_local_draft_v2:'));
+      return JSON.parse(localStorage.getItem(key)).current.text;
+    }), '이전 본문', 'manual save also stores an untouched initial draft');
     await title.fill('내가 할수 있는 일'); await body.fill(original);
+    await save.click();
+    await page.getByText('이 기기에 최신 글을 저장했어요.', { exact: true }).waitFor();
+    assert.equal(await page.evaluate((text) => {
+      const key = Object.keys(localStorage).find((key) => key.startsWith('sseudam_local_draft_v2:'));
+      const bundle = JSON.parse(localStorage.getItem(key));
+      return bundle.current.text === text && bundle.history.some((item) => item.reason === 'manual-save' && item.text === text);
+    }, original), true);
+    assert.equal(requests.length, 0, 'saving never invokes the spellcheck service');
+    await page.evaluate(() => {
+      window.qaOriginalStorageWrite = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (key.startsWith('sseudam_local_draft_v2:')) throw new DOMException('Test storage failure', 'QuotaExceededError');
+        return window.qaOriginalStorageWrite.call(this, key, value);
+      };
+    });
+    await save.click();
+    await page.getByText('저장하지 못했어요. 아래 안내를 확인해 주세요.', { exact: true }).waitFor();
+    assert.equal(await page.getByText('기기에 저장됨', { exact: true }).count(), 0);
+    assert.equal(await body.inputValue(), original, 'failed save preserves the visible manuscript');
+    await page.evaluate(() => { Storage.prototype.setItem = window.qaOriginalStorageWrite; });
+    await save.click();
+    await page.getByText('기기에 저장됨', { exact: true }).waitFor();
+    await page.reload();
+    await page.getByRole('heading', { name: '검사할 주제', exact: true }).click();
+    assert.equal(await body.inputValue(), original);
+    assert.equal(await title.inputValue(), '내가 할수 있는 일');
     assert.equal(await check.evaluate((element) => getComputedStyle(element).backgroundColor), 'rgb(45, 106, 79)');
     await page.getByRole('button', { name: '선생님 첨삭 닫기', exact: true }).click();
     await check.click();
@@ -147,7 +179,7 @@ async function main() {
     await page.getByRole('heading', { name: '다른 주제', exact: true }).click();
     assert.equal(await card.count(), 0, 'results cannot leak into another topic');
     assert.deepEqual(errors, []);
-    console.log('PASS: green visible button, unchanged-text reuse, ten-second request interval, results above teacher feedback, text-only requests, no cookies or automatic edits, repeated-word offsets, direct typing, title corrections, paragraph preservation, mobile selection, failed/late requests and topic isolation.');
+    console.log('PASS: manual local save, recovery checkpoint, save failure/retry and reload, no external call on save, green visible button, unchanged-text reuse, ten-second request interval, results above teacher feedback, text-only requests, no cookies or automatic edits, repeated-word offsets, direct typing, title corrections, paragraph preservation, mobile selection, failed/late requests and topic isolation.');
   } finally { await context.close(); await browser.close(); }
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

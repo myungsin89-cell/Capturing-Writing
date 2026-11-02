@@ -46,6 +46,7 @@ import {
   PanelRightOpen,
   MoreHorizontal,
   SpellCheck,
+  Save,
   X
 } from 'lucide-react';
 
@@ -679,6 +680,11 @@ export default function StudentStudio({
     feedbackToggleRef.current?.focus();
   };
   const canCheckSpelling = !isReadOnly && !isViewingText && !isSubmitting && Boolean(pieceTitle.trim() || editorText.trim());
+  const saveCurrentDraft = () => {
+    if (isReadOnly || isViewingText || isSubmitting) return;
+    if (draft.save()) showToast('이 기기에 최신 글을 저장했어요.');
+    else showToast('저장하지 못했어요. 아래 안내를 확인해 주세요.');
+  };
   const checkSpelling = () => {
     if (!canCheckSpelling || spellcheck.waitSeconds > 0) return;
     setFeedbackOpen(true);
@@ -806,12 +812,19 @@ export default function StudentStudio({
               <span className="text-xs text-[#64748B]">{paragraphCount}개 문단 · {activeDisplayText.trim().length}자</span>
             </div>
             <div className="flex items-center gap-3 flex-wrap">
+              <div className="flex items-center gap-2">
               <button type="button" className="student-spellcheck-trigger" aria-label="맞춤법 검사"
                 disabled={!canCheckSpelling || spellcheck.state?.status === 'loading' || spellcheck.waitSeconds > 0}
                 title={isTeacherPreview ? '교사 미리보기는 읽기 전용이에요. 학생 화면에서 검사할 수 있어요.' : '제목과 본문만 외부 맞춤법 검사 서비스로 보내요.'} onClick={checkSpelling}>
                 <SpellCheck className="w-4 h-4" aria-hidden="true" />{spellcheck.state?.status === 'loading' ? '검사 중…' : '맞춤법 검사'}
                 {spellcheck.waitSeconds > 0 && spellcheck.state?.status !== 'loading' && <span className="text-xs font-normal">· {spellcheck.waitSeconds}초 후</span>}
               </button>
+              <button type="button" className="student-action-button shrink-0" aria-label="저장"
+                disabled={isReadOnly || isViewingText || isSubmitting} onClick={saveCurrentDraft}
+                title={isTeacherPreview ? '교사 미리보기는 읽기 전용이에요.' : '현재 제목과 본문을 이 기기에 저장해요.'}>
+                <Save className="w-4 h-4" aria-hidden="true" />저장
+              </button>
+              </div>
               {lastSavedTime && !isReadOnly && viewingPageIdx === null && (
                 <span className="text-xs text-[#64748B]" title={'마지막 저장: ' + lastSavedTime}>기기에 저장됨</span>
               )}

@@ -95,6 +95,12 @@ export default function useStudentDraft({ owner, base, enabled, editable, editin
     if (!context || (!context.draft.id && !context.dirty)) return true;
     return persist(context.draft, { checkpoint: true, reason });
   }, [persist]);
+  const save = useCallback(() => {
+    const context = contextRef.current;
+    const options = optionsRef.current;
+    if (!context || context.key !== options.key || !options.editable) return false;
+    return persist({ ...context.draft, baseKey: options.base.key, editingCompleted: options.editingCompleted }, { checkpoint: true, reason: 'manual-save' });
+  }, [persist]);
 
   useEffect(() => {
     if (!key) return;
@@ -156,5 +162,5 @@ export default function useStudentDraft({ owner, base, enabled, editable, editin
       }
     } catch (err) { reportError(err); }
   };
-  return { pieceTitle, text, setPieceTitle, setText, savedAt, error, notice, loadState, flush, recovery, restore, captureSubmission, submitted, dismissNotice: () => setNotice(''), retry: () => flush('retry') };
+  return { pieceTitle, text, setPieceTitle, setText, savedAt, error, notice, loadState, save, flush, recovery, restore, captureSubmission, submitted, dismissNotice: () => setNotice(''), retry: () => flush('retry') };
 }
