@@ -271,7 +271,27 @@ function sheetFixture(t, record = submission()) {
     questions: [], config: { activeClassId: 'C1', activeTopicId: 'T1' }
   };
   let writes = 0; let loseResponse = false;
+  const claims = new Set();
   t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
+    if (url.includes('?fields=sheets(')) return new Response(JSON.stringify({ sheets: [{ properties: { sheetId: 0, title: 'AppState' } }, { properties: { sheetId: 1, title: 'Students' } }], namedRanges: [...claims].map((namedRangeId) => ({ namedRangeId, name: 'SSEUDAM_STATE_REVISION' })) }));
+    if (url.endsWith(':batchUpdate') && !url.includes('values:batchUpdate')) {
+      const requests = JSON.parse(options.body).requests;
+      const nextClaims = new Set(claims);
+      for (const request of requests) {
+        const old = request.deleteNamedRange?.namedRangeId;
+        const added = request.addNamedRange?.namedRange.namedRangeId;
+        if ((old && !nextClaims.has(old)) || (added && nextClaims.has(added))) return new Response(JSON.stringify({ error: { message: 'named range conflict' } }), { status: 400 });
+        if (old) nextClaims.delete(old);
+        if (added) nextClaims.add(added);
+      }
+      claims.clear(); for (const claim of nextClaims) claims.add(claim); writes += 1;
+      const rows = requests.find((item) => item.updateCells?.range.sheetId === 0).updateCells.rows;
+      const next = {};
+      for (const row of rows.slice(1)) next[row.values[0].userEnteredValue.stringValue] = JSON.parse(row.values[1].userEnteredValue.stringValue);
+      state = next;
+      if (loseResponse) { loseResponse = false; throw new Error('저장 응답 유실'); }
+      return new Response('{}');
+    }
     if (url.includes('values:batchUpdate')) {
       writes++;
       const rows = JSON.parse(options.body).data[0].values;

@@ -34,12 +34,23 @@ async function main() {
   let failSecondDoc = true;
   let failCleanupSecondDoc = false;
   const trashEvents = [];
+  let writeRevision = '';
   await context.route('https://**/*', async (route) => {
     const req = route.request();
     const url = new URL(req.url());
     const body = req.postData() ? JSON.parse(req.postData()) : null;
     const reply = (value) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(value) });
     if (url.hostname === 'sheets.googleapis.com') {
+      if (url.searchParams.has('fields')) return reply({ sheets: [{ properties: { sheetId: 0, title: 'AppState' } }, { properties: { sheetId: 1, title: 'Students' } }, { properties: { sheetId: 2, title: 'Questions' } }], namedRanges: writeRevision ? [{ namedRangeId: writeRevision, name: 'SSEUDAM_STATE_REVISION' }] : [] });
+      if (url.pathname.endsWith(':batchUpdate') && !url.pathname.endsWith('/values:batchUpdate')) {
+        const requests = body.requests;
+        const expected = requests.find((item) => item.deleteNamedRange)?.deleteNamedRange.namedRangeId || '';
+        if (expected !== writeRevision) return route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: { message: 'named range conflict' } }) });
+        writeRevision = requests.find((item) => item.addNamedRange).addNamedRange.namedRange.namedRangeId;
+        const rows = requests.find((item) => item.updateCells?.range.sheetId === 0).updateCells.rows;
+        state = Object.fromEntries(rows.slice(1).map((row) => [row.values[0].userEnteredValue.stringValue, JSON.parse(row.values[1].userEnteredValue.stringValue)]));
+        return reply({});
+      }
       if (url.pathname.endsWith('/values:batchUpdate')) {
         const rows = body.data.find((item) => item.range === 'AppState!A1').values.slice(1);
         const next = {}; const chunks = {};
@@ -259,7 +270,7 @@ async function main() {
     state.students[1].updatedAtIso = new Date(Date.now() + 1000).toISOString();
     await page.getByRole('checkbox', { name: /학생의 제출본과 조언을 읽고 확인했습니다/ }).check();
     await page.getByRole('button', { name: '이 학생에게 보내고 다음 학생', exact: true }).click();
-    await page.getByText('학생의 제출 상태가 바뀌었습니다. 최신 제출본을 확인하고 다시 준비해 주세요.', { exact: true }).waitFor();
+    await page.getByText(/학생의 제출 상태가 바뀌었습니다/).waitFor();
     assert.equal(state.students[1].teacherNote, undefined);
     await page.getByText('학생이 제출을 회수하거나 새 글을 제출했거나, 이미 다른 경로로 피드백을 받았습니다.', { exact: false }).waitFor();
     assert.equal(await page.getByRole('button', { name: '이 학생에게 보내고 다음 학생', exact: true }).isDisabled(), true);
@@ -374,6 +385,27 @@ async function main() {
     await roster.getByRole('button').filter({ hasText: '테스트학생27' }).waitFor({ state: 'visible' });
     await rosterScroll.evaluate((element) => { element.scrollTop = 0; });
     await page.screenshot({ path: path.join(process.env.BATCH_FEEDBACK_QA_DIR || root, 'feedback-roster-27-mobile.png'), fullPage: true });
+    // Individual feedback must reject a recall that the teacher has not seen yet.
+    state = structuredClone(seed);
+    await page.evaluate(() => localStorage.clear());
+    await page.setViewportSize({ width: 1440, height: 1050 });
+    await page.reload(); await openWorkspace();
+    const reviewNote = page.getByLabel('선생님의 종합 첨삭 노트', { exact: true });
+    await reviewNote.fill('회수되어도 남겨 둘 교사 첨삭');
+    Object.assign(state.students[0], { status: 'STAGE_1_WRITING', locked: false, recalled: true, updatedAtIso: new Date(Date.now() + 1000).toISOString() });
+    await page.getByRole('button', { name: '첨삭 보내고 수정 열기', exact: true }).click();
+    await page.getByText(/학생의 제출 상태가 바뀌었습니다/).waitFor();
+    assert.equal(await reviewNote.inputValue(), '회수되어도 남겨 둘 교사 첨삭');
+    assert.equal(await page.getByRole('button', { name: '첨삭 보내고 수정 열기', exact: true }).isDisabled(), true);
+    assert.equal(state.students[0].teacherNote, undefined);
+    const nextTime = new Date(Date.now() + 2000).toISOString();
+    Object.assign(state.students[0], { status: 'STAGE_1_SUBMITTED', locked: true, recalled: false, draft1: '다시 제출한 새 본문',
+      draftHistory: [{ text: '다시 제출한 새 본문', pieceTitle: state.students[0].pieceTitle, updatedAtIso: nextTime }], updatedAtIso: nextTime });
+    const preserved = page.getByText('이전 제출본에 작성하던 첨삭', { exact: true });
+    await preserved.waitFor({ timeout: 20000 });
+    await preserved.click();
+    await individualPanel.getByText('회수되어도 남겨 둘 교사 첨삭', { exact: true }).waitFor();
+    assert.equal(await reviewNote.inputValue(), '');
     assert.deepEqual(pageErrors, []);
     console.log(JSON.stringify({ passed: true, checks: ['common roster mode control', 'equal header button heights', 'keyboard mode navigation', 'individual draft preserved per student', 'batch selection and review preserved across modes', 'criteria dialog reuse and save', 'unsaved dialog changes protected', 'existing batch criteria retained after settings change', 'personal criteria copy across students', 'clipboard denial fallback', 'partial preparation retry', 'source docs preserved during batch', 'teacher review gate', 'manual edits retained', 'browser reload recovery', 'send selected student only', 'remote recall rejected and refreshed', 'mobile panel and dialog fit', 'dialog focus restored', 'reviewed batch send', 'trash only after persisted feedback', 'keep unsent files', 'cleanup failure retry', 'completed batch bulk cleanup', 'focus-driven doc import', 'retry only when needed', 'teacher edits preserved with immediate merge', 'late doc response cannot affect another student', '27-student common roster fits desktop and mobile'], pageErrors }));
   } catch (error) {

@@ -71,8 +71,16 @@ test('시트 직결 학생 API에서도 제출 회수 후 같은 차수로 다�
     updatedAt: '2026-10-27T00:00:00.000Z'
   };
 
+  let writeRevision = '';
   t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
     const target = String(url);
+    if (target.includes('?fields=sheets(')) return new Response(JSON.stringify({ sheets: [{ properties: { sheetId: 0, title: 'AppState' } }, { properties: { sheetId: 1, title: 'Students' } }], namedRanges: writeRevision ? [{ namedRangeId: writeRevision, name: 'SSEUDAM_STATE_REVISION' }] : [] }));
+    if (target.endsWith(':batchUpdate') && !target.includes('values:batchUpdate')) {
+      writeRevision = JSON.parse(options.body).requests.find((item) => item.addNamedRange).addNamedRange.namedRange.namedRangeId;
+      const rows = JSON.parse(options.body).requests.find((item) => item.updateCells?.range.sheetId === 0).updateCells.rows;
+      state = Object.fromEntries(rows.slice(1).map((row) => [row.values[0].userEnteredValue.stringValue, JSON.parse(row.values[1].userEnteredValue.stringValue)]));
+      return new Response('{}');
+    }
     if (target.includes('/gviz/tq')) {
       return new Response(gvizResponse(state));
     }
@@ -158,6 +166,12 @@ test('시트 직결 학생 API에서도 완성본 저장과 첨삭 요청을 구
 
   t.mock.method(globalThis, 'fetch', async (url, options = {}) => {
     const target = String(url);
+    if (target.includes('?fields=sheets(')) return new Response(JSON.stringify({ sheets: [{ properties: { sheetId: 0, title: 'AppState' } }, { properties: { sheetId: 1, title: 'Students' } }] }));
+    if (target.endsWith(':batchUpdate') && !target.includes('values:batchUpdate')) {
+      const rows = JSON.parse(options.body).requests.find((item) => item.updateCells?.range.sheetId === 0).updateCells.rows;
+      state = Object.fromEntries(rows.slice(1).map((row) => [row.values[0].userEnteredValue.stringValue, JSON.parse(row.values[1].userEnteredValue.stringValue)]));
+      return new Response('{}');
+    }
     if (target.includes('/gviz/tq')) return new Response(gvizResponse(state));
     if (target.includes('/values/AppState!') && !target.endsWith(':clear')) {
       return new Response(JSON.stringify({ values: appStateRows(state) }));

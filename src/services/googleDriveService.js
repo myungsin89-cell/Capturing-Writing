@@ -13,8 +13,9 @@ import gasCodeRaw from '../../gas/Code.gs?raw';
 import gasManifestRaw from '../../gas/appsscript.json?raw';
 import { prepareFeedbackBatch, cleanupFeedbackBatch } from './batchFeedbackDrive';
 import {
-  applyFeedbackToStudent, getFeedbackTopicRecord, hasFeedbackContent,
-  nextRecordTimestamp, wasBatchFeedbackDelivered, preserveCompletedWriting, getClassCompletedWritings
+  getFeedbackTopicRecord, hasFeedbackContent,
+  nextRecordTimestamp, wasBatchFeedbackDelivered, preserveCompletedWriting, getClassCompletedWritings,
+  applySubmissionTransition, getSubmissionSnapshot, isFeedbackCandidate
 } from '../utils/batchFeedback';
 
 export function prepareFeedbackBatchInDrive(accessToken, batch, onProgress) {
@@ -501,7 +502,14 @@ export function saveFullStateToSpreadsheet(accessToken, spreadsheetId, state) {
   // Serialize this browser's teacher writes so a delayed autosave cannot overtake
   // a reviewed-feedback send. Newer remote student records are merged below.
   const previous = spreadsheetSaveQueues.get(spreadsheetId) || Promise.resolve();
-  const pending = previous.catch(() => {}).then(() => writeFullStateToSpreadsheet(accessToken, spreadsheetId, state));
+  const pending = previous.catch(() => {}).then(async () => {
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      try { return await writeFullStateToSpreadsheet(accessToken, spreadsheetId, state); }
+      catch (error) {
+        if (error.code !== 'STATE_CONFLICT' || attempt === 3) throw error;
+      }
+    }
+  });
   spreadsheetSaveQueues.set(spreadsheetId, pending);
   const cleanup = () => {
     if (spreadsheetSaveQueues.get(spreadsheetId) === pending) spreadsheetSaveQueues.delete(spreadsheetId);
@@ -510,170 +518,133 @@ export function saveFullStateToSpreadsheet(accessToken, spreadsheetId, state) {
   return pending;
 }
 
-async function writeFullStateToSpreadsheet(
-  accessToken,
-  spreadsheetId,
-  { classes, topics, students, questions, config, replaceRemoteRecords = false, reviewedFeedback }
-) {
-  if (!accessToken || !spreadsheetId) return;
-  await ensureStudentSheetPermission(accessToken, spreadsheetId);
+async function readWriteContext(accessToken, spreadsheetId) {
+  // Read the revision before the cells. Deleting this exact revision in the
+  // write batch makes a concurrent write fail instead of overwriting it.
+  const metadata = await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}?fields=sheets(properties(sheetId,title)),namedRanges(namedRangeId,name)`, accessToken);
+  const revision = metadata.namedRanges?.find((range) => range.name === 'SSEUDAM_STATE_REVISION')?.namedRangeId || '';
+  const remote = await loadFullStateFromSpreadsheet(accessToken, spreadsheetId);
+  return { metadata, revision, remote };
+}
 
-  let safeStudents = students || [];
-  let safeQuestions = dedupeStoredQuestions(questions || []);
-  let feedbackStudent = null;
-  if (!replaceRemoteRecords) {
-    try {
-      const remote = await loadFullStateFromSpreadsheet(accessToken, spreadsheetId);
-      safeStudents = mergeNewerRemoteRecords(safeStudents, remote.students || []);
-      safeQuestions = mergeQuestions(safeQuestions, remote.questions || []);
-      if (reviewedFeedback) {
-        const { classId, topicId, entry } = reviewedFeedback;
-        if (!entry.reviewed || !hasFeedbackContent(entry)) throw new Error('피드백 내용을 읽고 확인한 후 전송해 주세요.');
-        const legacyClassId = remote.classes?.[0]?.id || remote.config?.activeClassId || '';
-        const target = (remote.students || []).find((student) =>
-          String(student.classId || legacyClassId) === String(classId) && String(student.number) === String(entry.number));
-        const topic = (remote.topics || []).find((item) => String(item.id) === String(topicId) && String(item.classId || legacyClassId) === String(classId));
-        const activeTopic = (remote.topics || []).find((item) => String(item.classId || legacyClassId) === String(classId) && item.isActive);
-        const activeTopicId = activeTopic?.id || remote.config?.activeTopicId;
-        if (topic && target && wasBatchFeedbackDelivered(getFeedbackTopicRecord(target, topic, activeTopicId), entry)) {
-          return { feedbackStudent: { ...target, classId: target.classId || legacyClassId } };
-        }
-        feedbackStudent = topic && target && applyFeedbackToStudent(
-          { ...target, classId: target.classId || legacyClassId },
-          { topicId, activeTopicId, entry, nowIso: nextRecordTimestamp([target]) }
-        );
-        if (!feedbackStudent) {
-          const error = new Error('학생의 제출 상태가 바뀌었습니다. 최신 제출본을 확인하고 다시 준비해 주세요.');
-          error.student = target ? { ...target, classId: target.classId || legacyClassId } : null;
-          throw error;
-        }
-        safeStudents = safeStudents.map((student) =>
-          String(student.classId || legacyClassId) === String(classId) && String(student.number) === String(entry.number)
-            ? feedbackStudent : student);
-      }
-    } catch (e) {
-      if (reviewedFeedback) throw e;
-      console.warn('저장 전 원격 변경 병합 참고:', e);
-    }
+async function writeStateAtomically(accessToken, spreadsheetId, context, data) {
+  const revisionId = context.revision ? `sseudam_revision_${crypto.randomUUID().replaceAll('-', '')}` : 'sseudam_revision_initial';
+  const sheetId = (title) => context.metadata.sheets?.find((sheet) => sheet.properties?.title === title)?.properties.sheetId;
+  const appSheetId = sheetId('AppState');
+  if (!Number.isInteger(appSheetId)) throw new Error('학급 저장 시트를 확인하지 못했습니다. 다시 시도해 주세요.');
+  const requests = [];
+  if (context.revision) requests.push({ deleteNamedRange: { namedRangeId: context.revision } });
+  requests.push({ addNamedRange: { namedRange: { namedRangeId: revisionId, name: 'SSEUDAM_STATE_REVISION',
+    range: { sheetId: appSheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: 1 } } } });
+  for (const entry of data) {
+    const id = sheetId(entry.title);
+    if (!Number.isInteger(id)) continue;
+    requests.push({ updateCells: {
+      range: { sheetId: id, startRowIndex: 0, endRowIndex: Math.max(entry.limit, entry.values.length), startColumnIndex: 0, endColumnIndex: entry.columns },
+      rows: entry.values.map((row) => ({ values: row.map((value) => ({ userEnteredValue: { stringValue: String(value ?? '') } })) })), fields: 'userEnteredValue'
+    } });
   }
-
-  const stateValues = buildChunkedStateValues({
-    classes: classes || [],
-    topics: topics || [],
-    students: safeStudents,
-    questions: safeQuestions,
-    config: { ...(config || {}), teacherBridgeToken: accessToken },
-    updatedAt: new Date().toISOString()
-  });
-  if (stateValues.length > 100) {
-    throw new Error('학급 데이터가 너무 커졌습니다. 자료 보관 구조 확장이 필요합니다.');
-  }
-
-  const studentRows = [
-    ['출석번호', '이름', '작품 제목', '상태', '1차 글', '2차 글', '3차 글', '4차 글', '선생님 종합 첨삭', '구글 독스 링크', '최근 수정']
-  ];
-  safeStudents.forEach((st) => {
-    studentRows.push([
-      String(st.number || ''),
-      String(st.name || ''),
-      String(st.pieceTitle || ''),
-      String(st.status || ''),
-      String(st.draft1 || ''),
-      String(st.draft2 || ''),
-      String(st.draft3 || ''),
-      String(st.draft4 || ''),
-      String(st.teacherNote || ''),
-      String(st.docUrl || ''),
-      String(st.updatedAt || '')
-    ]);
-  });
-
-  const questionRows = [
-    ['ID', '학급 ID', '주제 ID', '출석번호', '이름', '질문', '인용문', '답변', '해결 여부', '등록 시각', '수정 시각', '출처']
-  ];
-  safeQuestions.forEach((question) => {
-    questionRows.push([
-      String(question.id || ''),
-      String(question.classId || ''),
-      String(question.topicId || ''),
-      String(question.number || ''),
-      String(question.name || ''),
-      String(question.question || ''),
-      String(question.quote || ''),
-      String(question.reply || ''),
-      question.resolved ? '완료' : '대기',
-      String(question.createdAt || question.createdAtIso || ''),
-      String(question.updatedAt || question.updatedAtIso || ''),
-      String(question.source || '')
-    ]);
-  });
-
   try {
-    await googleFetch(
-      `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values:batchUpdate`,
-      accessToken,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          valueInputOption: 'RAW',
-          data: [
-            { range: 'AppState!A1', values: stateValues },
-            { range: 'Students!A1', values: studentRows },
-            { range: 'Questions!A1', values: questionRows }
-          ]
-        })
-      }
-    );
+    await googleFetch(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}:batchUpdate`, accessToken, { method: 'POST', body: JSON.stringify({ requests }) });
   } catch (error) {
-    // A lost HTTP response can follow a successful write. Read the receipt before
-    // reporting failure so a retry never sends a second feedback round.
-    if (reviewedFeedback) {
-      const readback = await loadFullStateFromSpreadsheet(accessToken, spreadsheetId);
-      const { classId, topicId, entry } = reviewedFeedback;
-      const legacyClassId = readback.classes?.[0]?.id || readback.config?.activeClassId || '';
-      const saved = readback.students?.find((student) => String(student.classId || legacyClassId) === String(classId) && String(student.number) === String(entry.number));
-      const activeTopicId = readback.topics?.find((topic) => topic.isActive && String(topic.classId || legacyClassId) === String(classId))?.id || readback.config?.activeTopicId;
-      if (saved && wasBatchFeedbackDelivered(getFeedbackTopicRecord(saved, { id: topicId }, activeTopicId), entry)) {
-        return { feedbackStudent: { ...saved, classId: saved.classId || legacyClassId } };
-      }
+    if (error.status === 400 && /named.?range|SSEUDAM_STATE_REVISION|sseudam_revision/i.test(error.message)) {
+      error.code = 'STATE_CONFLICT'; error.message = '다른 요청이 먼저 저장됐습니다. 최신 공책을 확인하고 다시 시도해 주세요.';
     }
     throw error;
   }
-
-  try {
-    const firstUnusedRow = stateValues.length + 1;
-    if (firstUnusedRow <= 100) {
-      await googleFetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/AppState!A${firstUnusedRow}:B100:clear`,
-        accessToken,
-        { method: 'POST', body: JSON.stringify({}) }
-      );
-    }
-
-    const firstUnusedStudentRow = studentRows.length + 1;
-    if (firstUnusedStudentRow <= 200) {
-      await googleFetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Students!A${firstUnusedStudentRow}:O200:clear`,
-        accessToken,
-        { method: 'POST', body: JSON.stringify({}) }
-      );
-    }
-
-    const firstUnusedQuestionRow = questionRows.length + 1;
-    if (firstUnusedQuestionRow <= 300) {
-      await googleFetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${spreadsheetId}/values/Questions!A${firstUnusedQuestionRow}:L300:clear`,
-        accessToken,
-        { method: 'POST', body: JSON.stringify({}) }
-      );
-    }
-  } catch (error) {
-    if (!reviewedFeedback) throw error;
-    console.warn('피드백 저장 후 빈 행 정리 참고:', error);
-  }
-  return { feedbackStudent };
 }
 
+async function commitSubmissionTransition(accessToken, spreadsheetId, transition, context) {
+  const remote = context.remote;
+  const legacyClassId = remote.classes?.[0]?.id || remote.config?.activeClassId || '';
+  const inClass = (item) => String(item.classId || legacyClassId) === String(transition.classId);
+  const student = remote.students?.find((item) => inClass(item) && String(item.number) === String(transition.number));
+  const topic = remote.topics?.find((item) => inClass(item) && String(item.id) === String(transition.topicId));
+  const activeTopicId = remote.topics?.find((item) => inClass(item) && item.isActive)?.id || remote.config?.activeTopicId;
+  const current = student && { ...student, classId: student.classId || legacyClassId };
+  const fail = (message, latest = current) => {
+    const error = new Error(message); error.student = latest; error.code = 'SUBMISSION_CHANGED'; return error;
+  };
+  const changedMessage = transition.kind === 'recall'
+    ? '선생님 첨삭이 도착했거나 제출 상태가 바뀌었어요. 최신 공책을 확인해 주세요.'
+    : '학생의 제출 상태가 바뀌었습니다. 회수·재제출 여부와 최신 글을 확인해 주세요. 작성한 첨삭은 보관했습니다.';
+  if (!student || !topic || (transition.kind === 'recall' && topic.classLocked)) throw fail('주제 또는 제출 상태가 바뀌었습니다. 최신 공책을 확인해 주세요.');
+  if (transition.batchEntryId && wasBatchFeedbackDelivered(getFeedbackTopicRecord(current, topic, activeTopicId), { id: transition.batchEntryId })) return { feedbackStudent: current };
+  const updated = applySubmissionTransition(current, {
+    topicId: topic.id, activeTopicId, transition, nowIso: nextRecordTimestamp([student])
+  });
+  if (!updated) throw fail(changedMessage);
+  if (updated === current) return { feedbackStudent: current };
+
+  const nextStudents = remote.students.map((item) => inClass(item) && String(item.number) === String(transition.number) ? updated : item);
+  const stateValues = buildChunkedStateValues({ ...remote, students: nextStudents,
+    config: { ...remote.config, teacherBridgeToken: accessToken, atomicStudentWrites: 1 }, updatedAt: new Date().toISOString() });
+  if (stateValues.length > 100) throw new Error('학급 데이터가 너무 큽니다. 자료 보관 구조를 확인해 주세요.');
+  const data = [{ title: 'AppState', values: stateValues, limit: 100, columns: 3 }];
+  {
+    const rows = [['출석번호', '이름', '작품 제목', '상태', '1차 글', '2차 글', '3차 글', '4차 글', '선생님 종합 첨삭', '구글 독스 링크', '최근 수정'],
+      ...nextStudents.map((item) => [item.number, item.name, item.pieceTitle, item.status, item.draft1, item.draft2, item.draft3, item.draft4, item.teacherNote, item.docUrl, item.updatedAt])];
+    data.push({ title: 'Students', values: rows, limit: 200, columns: 11 });
+  }
+  try {
+    await writeStateAtomically(accessToken, spreadsheetId, context, data);
+    return { feedbackStudent: updated };
+  } catch (error) {
+    // A lost response may follow a successful commit. Confirm its receipt before
+    // retrying; a competing save never falls back to an unguarded state write.
+    const readback = await loadFullStateFromSpreadsheet(accessToken, spreadsheetId);
+    const saved = readback.students?.find((item) => inClass(item) && String(item.number) === String(transition.number));
+    const record = getFeedbackTopicRecord(saved, { id: topic.id }, activeTopicId);
+    if (record?.submissionTransitionReceipt?.requestId === transition.requestId &&
+        record.submissionTransitionReceipt.resultKey === getSubmissionSnapshot(record).submissionKey) return { feedbackStudent: saved };
+    if (error.code === 'STATE_CONFLICT') throw error;
+    throw fail(!isFeedbackCandidate(record) ? changedMessage
+      : '저장 결과를 확인하지 못했습니다. 작성한 내용은 유지됩니다. 최신 상태를 확인하고 다시 시도해 주세요.', saved);
+  }
+}
+
+async function writeFullStateToSpreadsheet(
+  accessToken,
+  spreadsheetId,
+  { classes, topics, students, questions, config, replaceRemoteRecords = false, reviewedFeedback, submissionTransition }
+) {
+  if (!accessToken || !spreadsheetId) return;
+  await ensureStudentSheetPermission(accessToken, spreadsheetId);
+  const context = await readWriteContext(accessToken, spreadsheetId);
+  if (submissionTransition) return commitSubmissionTransition(accessToken, spreadsheetId, submissionTransition, context);
+  if (reviewedFeedback) {
+    const { classId, topicId, entry } = reviewedFeedback;
+    if (!entry.reviewed || !hasFeedbackContent(entry)) throw new Error('피드백 내용을 읽고 확인한 후 전송해 주세요.');
+    return commitSubmissionTransition(accessToken, spreadsheetId, {
+      kind: 'feedback', classId, topicId, number: String(entry.number), submissionKey: entry.submissionKey,
+      requestId: `batch:${entry.id}`, batchEntryId: entry.id, note: entry.note || '', comments: entry.comments || []
+    }, context);
+  }
+  const safeStudents = replaceRemoteRecords ? students || [] : mergeNewerRemoteRecords(students || [], context.remote.students || []);
+  const safeQuestions = replaceRemoteRecords ? dedupeStoredQuestions(questions || []) : mergeQuestions(questions || [], context.remote.questions || []);
+  const stateValues = buildChunkedStateValues({
+    classes: classes || [], topics: topics || [], students: safeStudents, questions: safeQuestions,
+    config: { ...(config || {}), teacherBridgeToken: accessToken, atomicStudentWrites: 1 }, updatedAt: new Date().toISOString()
+  });
+  if (stateValues.length > 100) throw new Error('학급 데이터가 너무 커졌습니다. 자료 보관 구조 확장이 필요합니다.');
+  const studentRows = [
+    ['출석번호', '이름', '작품 제목', '상태', '1차 글', '2차 글', '3차 글', '4차 글', '선생님 종합 첨삭', '구글 독스 링크', '최근 수정'],
+    ...safeStudents.map((item) => [item.number, item.name, item.pieceTitle, item.status, item.draft1, item.draft2, item.draft3, item.draft4, item.teacherNote, item.docUrl, item.updatedAt])
+  ];
+  const questionRows = [
+    ['ID', '학급 ID', '주제 ID', '출석번호', '이름', '질문', '인용문', '답변', '해결 여부', '등록 시각', '수정 시각', '출처'],
+    ...safeQuestions.map((item) => [item.id, item.classId, item.topicId, item.number, item.name, item.question, item.quote,
+      item.reply, item.resolved ? '완료' : '대기', item.createdAt || item.createdAtIso, item.updatedAt || item.updatedAtIso, item.source])
+  ];
+  // The revision, AppState, mirrors and clearing unused cells share one atomic
+  // request. A stale autosave retries its merge against the winning state.
+  await writeStateAtomically(accessToken, spreadsheetId, context, [
+    { title: 'AppState', values: stateValues, limit: 100, columns: 3 },
+    { title: 'Students', values: studentRows, limit: 200, columns: 15 },
+    { title: 'Questions', values: questionRows, limit: 300, columns: 12 }
+  ]);
+  return { feedbackStudent: null };
+}
 function getStoredDraftHistory(record = {}) {
   const isFreshTopic = record.status === 'STAGE_1_WRITING' && !record.recalled &&
     !String(record.pieceTitle || '').trim() &&
@@ -1461,6 +1432,7 @@ export async function callDirectSheetStudentApi(payload = {}) {
       return {
         ok: true,
         sessionToken,
+        atomicWrites: state.config.atomicStudentWrites === 1,
         student: { ...student, classId: student.classId || classId },
         questions: questionsForStudent(classId, student.number),
         topics: topicsForClass(classId),
@@ -1529,6 +1501,10 @@ export async function callDirectSheetStudentApi(payload = {}) {
 
       const isActive = !activeTopic || String(topic.id) === String(activeTopic.id);
       const topicRecord = isActive ? student : student.historyByTopic?.[topic.id] || {};
+      if (!isFeedbackCandidate({ ...topicRecord, classId, number })) {
+        return { ok: false, student,
+          error: topicRecord.status === 'FEEDBACK_DONE' ? '선생님 첨삭이 도착했어요. 첨삭을 확인하고 고쳐 써 주세요.' : '제출 상태가 바뀌었어요. 최신 공책을 확인해 주세요.' };
+      }
       if (topicRecord.status === 'FINAL_COMPLETED') {
         return {
           ok: false,
@@ -1539,27 +1515,6 @@ export async function callDirectSheetStudentApi(payload = {}) {
         return { ok: false, error: '아직 회수할 제출 글이 없습니다.' };
       }
 
-      const nextStatus =
-        topicRecord.status === 'STAGE_1_SUBMITTED' ? 'STAGE_1_WRITING' : 'FEEDBACK_DONE';
-      const recalledRecord = {
-        ...topicRecord,
-        locked: false,
-        recalled: true,
-        status: nextStatus,
-        updatedAtIso: new Date().toISOString()
-      };
-
-      if (isActive) {
-        Object.assign(student, recalledRecord, { classId });
-      } else {
-        student.historyByTopic = {
-          ...(student.historyByTopic || {}),
-          [topic.id]: recalledRecord
-        };
-        student.updatedAtIso = recalledRecord.updatedAtIso;
-      }
-      state.students[studentIdx] = student;
-
       if (!bridgeToken) {
         return {
           ok: false,
@@ -1567,16 +1522,15 @@ export async function callDirectSheetStudentApi(payload = {}) {
         };
       }
 
-      await saveFullStateToSpreadsheet(bridgeToken, spreadsheetId, {
-        classes: state.classes,
-        topics: state.topics,
-        students: state.students,
-        questions: state.questions,
-        config: state.config,
-        replaceRemoteRecords: true
+      const result = await saveFullStateToSpreadsheet(bridgeToken, spreadsheetId, {
+        submissionTransition: {
+          kind: 'recall', classId, number: String(number), topicId: topic.id,
+          submissionKey: payload.submissionKey || getSubmissionSnapshot(topicRecord).submissionKey,
+          requestId: payload.requestId || crypto.randomUUID()
+        }
       });
 
-      return { ok: true, student };
+      return { ok: true, student: result.feedbackStudent };
     }
 
     if (action === 'submitStage') {
@@ -1674,7 +1628,7 @@ export async function callDirectSheetStudentApi(payload = {}) {
         students: state.students,
         questions: state.questions,
         config: state.config,
-        replaceRemoteRecords: true
+        replaceRemoteRecords: false
       });
 
       if (student.docId && !String(student.docId).startsWith('DEMO_')) {
@@ -1742,7 +1696,7 @@ export async function callDirectSheetStudentApi(payload = {}) {
         students: state.students,
         questions: state.questions,
         config: state.config,
-        replaceRemoteRecords: true
+        replaceRemoteRecords: false
       });
 
       return {
@@ -1761,7 +1715,8 @@ export async function callDirectSheetStudentApi(payload = {}) {
     }
     return {
       ok: false,
-      error: userMsg
+      error: userMsg,
+      ...(err.student ? { student: err.student } : {})
     };
   }
 }

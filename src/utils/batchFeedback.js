@@ -63,7 +63,32 @@ export function getSubmissionSnapshot(record) {
 }
 
 export function isFeedbackCandidate(record) {
-  return Boolean(record && SUBMITTED.has(record.status) && getSubmissionSnapshot(record).text.trim());
+  return Boolean(record && !record.recalled && SUBMITTED.has(record.status) && getSubmissionSnapshot(record).text.trim());
+}
+
+export function applySubmissionTransition(student, { topicId, activeTopicId, transition, nowIso }) {
+  const record = getFeedbackTopicRecord(student, { id: topicId }, activeTopicId);
+  const receipt = record?.submissionTransitionReceipt;
+  if (receipt?.requestId === transition.requestId && receipt?.submissionKey === transition.submissionKey &&
+      receipt.resultKey === getSubmissionSnapshot(record).submissionKey &&
+      (transition.kind !== 'recall' || record.recalled)) return student;
+  if (!isMatchingSubmission(record, transition)) return null;
+  let nextRecord;
+  if (transition.kind === 'recall') {
+    nextRecord = { ...record, locked: false, recalled: true,
+      status: record.status === 'STAGE_1_SUBMITTED' ? 'STAGE_1_WRITING' : 'FEEDBACK_DONE', updatedAtIso: nowIso };
+  } else if (['feedback', 'complete'].includes(transition.kind)) {
+    nextRecord = updateWritingFeedbackRecord(record, {
+      status: transition.kind === 'complete' ? 'FINAL_COMPLETED' : 'FEEDBACK_DONE',
+      locked: transition.kind === 'complete', teacherNote: transition.note,
+      feedbackItems: transition.comments, completionStars: transition.completionStars, updatedAtIso: nowIso
+    });
+  } else return null;
+  nextRecord.submissionTransitionReceipt = { requestId: transition.requestId, submissionKey: transition.submissionKey,
+    kind: transition.kind, resultKey: getSubmissionSnapshot(nextRecord).submissionKey };
+  if (transition.batchEntryId) nextRecord.batchFeedbackReceipt = { entryId: transition.batchEntryId, sentAt: nowIso };
+  return String(topicId) === String(activeTopicId) ? { ...student, ...nextRecord }
+    : { ...student, historyByTopic: { ...student.historyByTopic, [topicId]: nextRecord }, updatedAtIso: nowIso };
 }
 
 export function normalizeCompletionStars(value) {

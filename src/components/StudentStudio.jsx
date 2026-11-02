@@ -124,6 +124,8 @@ export default function StudentStudio({
     return {
       ...currentStudent,
       status: past?.status || 'STAGE_1_WRITING',
+      recalled: Boolean(past?.recalled),
+      updatedAtIso: past?.updatedAtIso || '',
       pieceTitle: past?.pieceTitle || '',
       draft1: past?.draft1 || '',
       draft2: past?.draft2 || '',
@@ -382,6 +384,11 @@ export default function StudentStudio({
           }
         }, 50);
       } else {
+        if (res?.student) {
+          setIsSubmissionAccepted(false);
+          const record = selectedTopic.id === config.activeTopicId ? res.student : res.student.historyByTopic?.[selectedTopic.id];
+          if (record?.status === 'FEEDBACK_DONE') setFeedbackOpen(true);
+        }
         showToast(res?.error || '제출을 회수하지 못했습니다.');
       }
     } finally {

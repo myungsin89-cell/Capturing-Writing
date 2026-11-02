@@ -195,6 +195,10 @@ export default function TeacherDashboard({
   const [completedTopicId, setCompletedTopicId] = useState(null);
   const [completionStars, setCompletionStars] = useState(0);
   const [docSyncStatus, setDocSyncStatus] = useState('idle');
+  const [isSendingReview, setIsSendingReview] = useState(false);
+  const reviewSendingRef = useRef(false);
+  const reviewRequestRef = useRef(null);
+  const [preservedFeedback, setPreservedFeedback] = useState(null);
   const docPullingRef = useRef(false);
   const docContextRef = useRef(null);
   const personalDraftCacheRef = useRef(new Map());
@@ -226,6 +230,8 @@ export default function TeacherDashboard({
     return {
       ...rawSt,
       status: past?.status || 'STAGE_1_WRITING',
+      recalled: Boolean(past?.recalled),
+      updatedAtIso: past?.updatedAtIso || '',
       pieceTitle: past?.pieceTitle || '',
       draft1: past?.draft1 || '',
       draft2: past?.draft2 || '',
@@ -245,7 +251,9 @@ export default function TeacherDashboard({
   const selectedStudent = getStudentTopicData(rawSelectedStudent, currentTopic);
   const draftPages = getStudentDraftPages(selectedStudent);
   const selectedSubmissionKey = getSubmissionSnapshot(selectedStudent).submissionKey;
-  const personalContextKey = JSON.stringify([currentTopic?.id, selectedStudent?.number, selectedSubmissionKey]);
+  const selectedSnapshot = getSubmissionSnapshot(selectedStudent);
+  const personalContextKey = JSON.stringify([config.activeClassId, currentTopic?.id, selectedStudent?.number,
+    selectedSnapshot.round, selectedSnapshot.pieceTitle, selectedSnapshot.text]);
   docContextRef.current = { key: personalContextKey, note: feedbackNote, comments: modalFeedbackItems };
   const isSelectedStudentFinal = isFinalWritingStatus(selectedStudent?.status);
   const canSendSelectedFeedback = isFeedbackCandidate(selectedStudent);
@@ -279,7 +287,14 @@ export default function TeacherDashboard({
     if (!selectedStudent || !currentTopic) return;
     const pages = getStudentDraftPages(selectedStudent);
     const previousKey = personalDraftContextRef.current;
-    if (previousKey && previousKey !== personalContextKey) personalDraftCacheRef.current.set(previousKey, personalDraftValuesRef.current);
+    if (previousKey && previousKey !== personalContextKey) {
+      const previous = personalDraftValuesRef.current;
+      personalDraftCacheRef.current.set(previousKey, previous);
+      const oldOwner = JSON.parse(previousKey).slice(0, 3);
+      const nextOwner = JSON.parse(personalContextKey).slice(0, 3);
+      setPreservedFeedback(JSON.stringify(oldOwner) === JSON.stringify(nextOwner) &&
+        (previous?.note?.trim() || previous?.comments?.length) ? previous : null);
+    }
     personalDraftContextRef.current = personalContextKey;
     setHighlightedQuote('');
     setDraggedQuote('');
@@ -533,33 +548,39 @@ export default function TeacherDashboard({
     showToast('선택한 문장에 부분 첨삭 메모가 추가되었습니다!');
   };
 
-  const handleConfirmFeedbackDone = (e) => {
+  const sendReview = async (status) => {
+    if (reviewSendingRef.current || !selectedStudent || !canSendSelectedFeedback) return;
+    reviewSendingRef.current = true; setIsSendingReview(true);
+    const context = { number: selectedStudent.number, topicId: currentTopic?.id || '', status,
+      submissionKey: selectedSubmissionKey, note: feedbackNote, comments: modalFeedbackItems, completionStars };
+    const signature = JSON.stringify(context);
+    if (reviewRequestRef.current?.signature !== signature) reviewRequestRef.current = { signature, id: crypto.randomUUID() };
+    const ownerKey = personalContextKey;
+    try {
+      const result = await onUpdateStudentStatus({
+        number: context.number, topicId: context.topicId, status, locked: status === 'FINAL_COMPLETED',
+        teacherNote: context.note, feedbackItems: context.comments, completionStars,
+        submissionKey: context.submissionKey, requestId: reviewRequestRef.current.id
+      });
+      if (result?.ok !== true) {
+        personalDraftCacheRef.current.set(ownerKey, { note: context.note, comments: context.comments });
+        showToast(result?.error || '전송을 확인하지 못했습니다. 작성한 첨삭은 유지됩니다.'); return;
+      }
+      reviewRequestRef.current = null;
+      showToast(status === 'FINAL_COMPLETED' ? `${selectedStudent.name} 학생의 글을 최종 완성본으로 확정했습니다!`
+        : `${selectedStudent.name} 학생 공책으로 첨삭을 보내고 수정 모드를 열었습니다!`);
+    } catch {
+      showToast('전송하지 못했습니다. 작성한 첨삭은 유지됩니다. 잠시 뒤 다시 시도해 주세요.');
+    } finally { reviewSendingRef.current = false; setIsSendingReview(false); }
+  };
+  const handleConfirmFeedbackDone = async (e) => {
     e.preventDefault();
-    if (!selectedStudent || !canSendSelectedFeedback) return;
-    onUpdateStudentStatus({
-      number: selectedStudent.number,
-      topicId: currentTopic?.id || '',
-      status: 'FEEDBACK_DONE',
-      locked: false,
-      teacherNote: feedbackNote,
-      feedbackItems: modalFeedbackItems
-    });
-    showToast(`${selectedStudent.name} 학생 공책으로 첨삭을 보내고 수정 모드를 열었습니다!`);
+    await sendReview('FEEDBACK_DONE');
   };
 
   const handleFinalizeWriting = async () => {
     if (!selectedStudent || !canFinalizeSelectedStudent) return;
-    const result = await onUpdateStudentStatus({
-      number: selectedStudent.number,
-      topicId: currentTopic?.id || '',
-      status: 'FINAL_COMPLETED',
-      locked: true,
-      teacherNote: feedbackNote,
-      feedbackItems: modalFeedbackItems,
-      completionStars
-    });
-    if (result?.ok === false) { showToast(result.error); return; }
-    showToast(`${selectedStudent.name} 학생의 글을 최종 완성본으로 확정했습니다!`);
+    await sendReview('FINAL_COMPLETED');
   };
 
   const handleSaveCompletionStars = async () => {
@@ -2583,6 +2604,11 @@ export default function TeacherDashboard({
 
               {/* [핵심 2] 큼직하고 넓은 『선생님의 종합 첨삭 노트』 (Brisk 복사·붙여넣기 메인 영역!) */}
               <div className="flex-1 flex flex-col">
+                {preservedFeedback && <details className="mb-3 rounded-xl border border-[#CBD5E1] p-3 text-sm">
+                  <summary className="cursor-pointer text-[#475569]">이전 제출본에 작성하던 첨삭</summary>
+                  <div className="mt-2 whitespace-pre-wrap text-[#64748B]">{preservedFeedback.note}</div>
+                  {preservedFeedback.comments?.map((item, index) => <p key={item.id || index} className="mt-2 text-[#64748B]">{item.quote} · {item.comment}</p>)}
+                </details>}
                 <div className="flex items-center justify-between mb-2">
                   <label htmlFor="individual-feedback-note" className="text-sm font-bold text-[#1B4332] flex items-center gap-1.5">
                     <HandDrawnSparkleIcon size={17} color="#1B4332" />
@@ -2678,6 +2704,7 @@ export default function TeacherDashboard({
 
               return (
                 <div className="space-y-2">
+                  {selectedStudent?.recalled && <p role="status" className="rounded-xl border border-[#CBD5E1] bg-[#F8FAFC] p-3 text-sm text-[#475569]">학생이 제출을 회수했어요. 작성한 첨삭은 유지되며, 다시 제출하면 최신 글을 확인한 뒤 보내 주세요.</p>}
                   {isCompletedReturn && <div role="status" className="rounded-xl border border-[#93C5FD] bg-[#EFF6FF] p-3 text-sm text-[#1E40AF] space-y-1">
                     <p className="font-semibold">완성 후 재제출 · 더 다듬은 작품을 확인해 주세요.</p>
                     <div className="flex items-center gap-2 text-xs">이전 완성본 {approvedWriting?.stars ? <CompletionStars value={approvedWriting.stars} /> : '· 별 없이 완성'}</div>
@@ -2700,7 +2727,7 @@ export default function TeacherDashboard({
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <button
                         type="submit"
-                        disabled={!canSendSelectedFeedback}
+                        disabled={!canSendSelectedFeedback || isSendingReview}
                         className={`h-13 text-sm font-bold flex items-center justify-center gap-2 rounded-2xl transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed ${
                           hasUnsentFeedback
                             ? 'bg-[#D97706] hover:bg-[#B45309] text-white border-2 border-[#92400E] shadow-md'
@@ -2708,12 +2735,12 @@ export default function TeacherDashboard({
                         }`}
                       >
                         <HandDrawnCheckIcon size={18} color="#FFFFFF" />
-                        <span>첨삭 보내고 수정 열기</span>
+                        <span>{isSendingReview ? '저장 확인 중…' : '첨삭 보내고 수정 열기'}</span>
                       </button>
                       <button
                         type="button"
                         onClick={handleFinalizeWriting}
-                        disabled={!canFinalizeSelectedStudent}
+                        disabled={!canFinalizeSelectedStudent || isSendingReview}
                         className="h-13 rounded-2xl bg-[#D8F3DC] border-2 border-[#1B4332] text-[#1B4332] text-sm font-bold flex items-center justify-center gap-2 hover:bg-[#B7E4C7] transition cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <HandDrawnCheckIcon size={18} color="#1B4332" />

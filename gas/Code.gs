@@ -619,6 +619,12 @@ function unsubmitStageV2(payload) {
   const activeTopic = findActiveTopicV2_(state, session.classId);
   const isActive = activeTopic && String(activeTopic.id) === String(topic.id);
   const nowIso = new Date().toISOString();
+  const recallRecord = isActive ? student : (student.historyByTopic || {})[topic.id] || {};
+  if (['STAGE_1_SUBMITTED', 'STAGE_2_SUBMITTED', 'STAGE_3_COMPLETED', 'REVISION_SUBMITTED'].indexOf(recallRecord.status) < 0 || recallRecord.recalled) {
+    return { ok: false, student: student, error: recallRecord.status === 'FEEDBACK_DONE'
+      ? '선생님 첨삭이 도착했어요. 첨삭을 확인하고 고쳐 써 주세요.'
+      : '제출 상태가 바뀌었어요. 최신 공책을 확인해 주세요.' };
+  }
   
   if (isActive) {
     student.locked = false;

@@ -25,7 +25,7 @@ import {
 import { shouldAutoSaveTeacherState } from './utils/syncPolicy';
 import {
   getFeedbackTopicRecord, isMatchingSubmission, nextRecordTimestamp,
-  normalizeFeedbackCriteria, updateWritingFeedbackRecord, wasBatchFeedbackDelivered,
+  normalizeFeedbackCriteria, updateWritingFeedbackRecord, wasBatchFeedbackDelivered, getSubmissionSnapshot,
   preserveCompletedWriting, getClassCompletedWritings, isFeedbackCandidate, preserveStudentCompletedWritings, updateCompletedWritingStars
 } from './utils/batchFeedback';
 import { getUsableDraftHistory, repairLeakedDraftHistory, transitionStudentToNewTopic } from './utils/topicTransition.js';
@@ -772,6 +772,14 @@ export default function App() {
       };
       setIsSyncing(true);
       try {
+        if (isStudentUrlMode && studentSession?.number && ['submitStage', 'addQuestion'].includes(payload.action)) {
+          const login = await callDirectSheetStudentApi({ action: 'studentLogin', spreadsheetId: targetSheetId,
+            classId: urlClassId, accessKey: urlAccessKey, number: studentSession.number, name: studentSession.name });
+          if (!login?.ok) return login || { ok: false, error: '최신 제출 상태를 확인하지 못했어요. 잠시 뒤 다시 시도해 주세요.' };
+          if (login?.ok && login.atomicWrites) {
+            return await callDirectSheetStudentApi({ ...fullPayload, sessionToken: login.sessionToken });
+          }
+        }
         if (gasUrl) {
           try {
             const res = await fetch(gasUrl, {
@@ -796,7 +804,7 @@ export default function App() {
         setIsSyncing(false);
       }
     },
-    [gasUrl, urlSheetId, config.spreadsheetId]
+    [gasUrl, urlSheetId, config.spreadsheetId, isStudentUrlMode, studentSession?.number, studentSession?.name, urlClassId, urlAccessKey]
   );
 
   const handleSaveGasUrl = (newUrl) => {
@@ -1023,11 +1031,20 @@ export default function App() {
     if (isStudentUrlMode) {
       const finishMutation = studentRequestGuardRef.current.beginMutation();
       try {
-        const data = await callGasApi({
-          action: 'unsubmitStage',
-          sessionToken: studentSession?.token || '',
-          topicId
+        const directLogin = await callDirectSheetStudentApi({
+          action: 'studentLogin', spreadsheetId: urlSheetId, classId: urlClassId,
+          accessKey: urlAccessKey, number: activeStudent?.number, name: activeStudent?.name
         });
+        if (!directLogin?.ok) return { ok: false, error: directLogin?.error || '최신 제출 상태를 확인하지 못했어요. 다시 시도해 주세요.' };
+        const ownStudent = students.find((item) => String(item.number) === String(studentNumber)) || activeStudent;
+        const ownRecord = getFeedbackTopicRecord(ownStudent, { id: topicId }, config.activeTopicId);
+        const data = await callDirectSheetStudentApi({
+          action: 'unsubmitStage',
+          spreadsheetId: urlSheetId, sessionToken: directLogin.sessionToken,
+          topicId, submissionKey: getSubmissionSnapshot(ownRecord).submissionKey,
+          requestId: crypto.randomUUID()
+        });
+        if (data?.student) { setStudents([data.student]); setActiveStudent(data.student); }
         if (!data?.ok || !data.student) {
           return { ok: false, error: data?.error || '제출을 회수하지 못했습니다.' };
         }
@@ -1122,7 +1139,9 @@ export default function App() {
     teacherNote,
     feedbackItems,
     completionStars,
-    starsOnly = false
+    starsOnly = false,
+    submissionKey,
+    requestId
   }) => {
     const targetSt = students.find(
       (s) => belongsToActiveClass(s) && String(s.number) === String(number)
@@ -1136,6 +1155,30 @@ export default function App() {
     }
     if (status === 'FINAL_COMPLETED' && !isFeedbackCandidate(targetTopicData)) {
       return { ok: false, error: '학생이 제출한 최신 글을 확인한 뒤 완성 처리해 주세요.' };
+    }
+    if (!starsOnly && ['FEEDBACK_DONE', 'FINAL_COMPLETED'].includes(status) && googleAuth?.accessToken && config.spreadsheetId) {
+      try {
+        const result = await saveFullStateToSpreadsheet(googleAuth.accessToken, config.spreadsheetId, {
+          submissionTransition: {
+            kind: status === 'FINAL_COMPLETED' ? 'complete' : 'feedback',
+            classId: targetSt.classId || legacyClassId, number: String(number), topicId: targetTopicId,
+            submissionKey: submissionKey || getSubmissionSnapshot(targetTopicData).submissionKey,
+            requestId: requestId || crypto.randomUUID(), note: teacherNote || '', comments: feedbackItems || [], completionStars
+          }
+        });
+        if (!result?.feedbackStudent) throw new Error('첨삭 저장을 확인하지 못했습니다.');
+        setStudents((previous) => mergeLatestByKey(previous, [result.feedbackStudent], (item) => `${item.classId || legacyClassId}::${item.number}`));
+        const savedRecord = getFeedbackTopicRecord(result.feedbackStudent, { id: targetTopicId }, config.activeTopicId);
+        if (status === 'FEEDBACK_DONE' && savedRecord?.docId) {
+          resetGoogleDocWithStudentText(googleAuth.accessToken, savedRecord.docId, getLatestDraftText(savedRecord), {
+            pieceTitle: savedRecord.pieceTitle || '', authorName: result.feedbackStudent.name || ''
+          }).catch(() => { /* Feedback is already saved; document cleanup can be retried separately. */ });
+        }
+        return { ok: true };
+      } catch (error) {
+        if (error.student) setStudents((previous) => mergeLatestByKey(previous, [error.student], (item) => `${item.classId || legacyClassId}::${item.number}`));
+        return { ok: false, error: error.message };
+      }
     }
     const now = new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
     // 학생 기기의 시간이 교사 기기보다 앞서 있어도, 첨삭 완료가 해당 제출보다 최신이 되게 합니다.
